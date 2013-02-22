@@ -1,0 +1,37 @@
+#!/bin/zsh
+
+export MUSIC AURIC_BIN PATH
+
+: ${MUSIC:=$HOME/music}
+: ${AURIC_BIN:=/usr/local/auric/bin}
+PATH=${AURIC_BIN}:$PATH
+
+main() {
+    typeset opt debug=false
+    while getopts :r opt; do
+        case $opt in
+            (d) debug=true ;;
+            (r) MUSIC=$OPTARG ;;
+        esac
+    done
+    shift $(( OPTIND - 1 ))
+    (( $#argv > 0 )) || usage
+    typeset cmd cmdexec
+    cmd=$1; shift
+    cmdexec=$AURIC_BIN/auric-$cmd
+    [[ -x $cmdexec && ! -d $cmdexec ]] || usage "Unrecognized command: $cmd"
+    cd $MUSIC || fatal 2 "Can't chdir to $MUSIC"
+    #if $debug; then
+    #    /usr/bin/perl -d $cmdexec "$@"
+    #else
+        $cmdexec "$@"
+    #fi
+}
+
+fatal() {
+    integer code=$1; shift
+    print "$*" >&2
+    exit $code
+}
+
+main "$@"

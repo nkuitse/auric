@@ -1,0 +1,23 @@
+#!/bin/zsh
+
+cd ${MUSIC:-~/var/music} || fatal
+source lib/functions.zsh
+
+(( $#argv > 0 )) || set disc-*
+
+typeset d t n
+for d in $@; do
+    if [[ -d $d/cdda2wav ]]; then
+        print skip
+    else
+        mkdir $d/cdda2wav
+        for t in $d/0???; do
+            print $t
+            n=${t[-2,-1]}
+            [[ ! -e $t/info.orig ]] || mv $t/info.orig $d/cdda2wav/audio_$n.inf
+            ln -s ../$t:t/listen.mp3 $d/cdda2wav/audio_$n.mp3
+        done
+        mv $d/audio.*(N) $d/cdda2wav/
+        print ok
+    fi | show-progress $d
+done

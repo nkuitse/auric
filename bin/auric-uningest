@@ -1,0 +1,24 @@
+#!/bin/zsh -e
+
+for d in "$@"; do
+    typeset discid=$d:t
+    [[ $discid == disc-???????? ]] || usage
+    cd $MUSIC/$discid || fatal
+    print disc $discid
+    if [[ -d cdda2wav ]]; then
+        rm -f cdda2wav/audio_??.mp3(N)
+        rm -f cdda2wav/audio_??.wav(N)
+        mv cdda2wav/*.*(.N) ./
+        rmdir cdda2wav
+    fi
+    for track in [0-9][0-9][0-9][0-9](/N); do
+        print track $track
+        t=${track[-2,-1]}
+        [[ ! -e $track/master.wav ]] || mv $track/master.wav audio_$t.wav
+        [[ ! -e $track/listen.mp3 ]] || mv $track/listen.mp3 audio_$t.mp3
+        [[ ! -e $track/info.orig  ]] || mv $track/info.orig  audio_$t.inf
+        [[ ! -e $track/tags       ]] || mv $track/tags       audio_$t.tags
+        rmdir $track
+    done
+    print done
+done

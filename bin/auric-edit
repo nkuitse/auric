@@ -1,0 +1,4 @@
+#!/bin/zsh -e
+
+cd ${MUSIC:-~/music}
+vim -p $(for o in $@; do print $o/metadata; done)

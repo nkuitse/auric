@@ -1,0 +1,38 @@
+#!/bin/zsh -e
+
+typeset -A key2tag
+key2tag=(
+    album       TALB
+    composer    TCOM
+    soloist     TPE1
+    performer   TPE3
+    conductor   TPE3
+    orchestra   TPE2
+    band        TPE2
+    title       TIT2
+    year        TYER
+    track       TRCK
+)
+
+main() {
+    typeset d f key val
+    typeset -a params
+    auric-mktags "$@"
+    cd ${MUSIC:-~/music} || fatal
+    for d in $@:t; do
+        for f in $d/????/tags; do
+            t=$f:h:t
+            # print $t >&2
+            params=( --UFID auric:$d/$t )
+            exec < $f
+            while read key val; do
+                tag=${key2tag[$key]}
+                [[ -z $tag ]] || params+=( --$tag "$val" )
+            done
+            [[ -e $d/$t/listen.mp3 ]] || lame --nohist --preset fast standard $d/$t/master.wav $d/$t/listen.mp3 >&2
+            id3v2 $params $d/$t/listen.mp3 >&2
+        done
+    done
+}
+
+main "$@"

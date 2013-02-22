@@ -1,0 +1,18 @@
+#!/bin/zsh
+
+main() {
+    typeset obj
+    for obj in $@; do
+        obj2file $obj || exit 2
+    done | xargs mocp -c -p -a
+}
+
+obj2file() {
+    typeset obj=$1 base
+    set -- $obj/**/listen.*
+    (( $#argv > 0 )) || return 2
+    print -l "$@"
+}
+
+main "$@"
+

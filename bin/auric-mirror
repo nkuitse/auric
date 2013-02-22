@@ -1,0 +1,3 @@
+#!/bin/zsh
+
+rsync -a --exclude=mirror ./ mirror/

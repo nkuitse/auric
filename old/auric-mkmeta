@@ -1,0 +1,73 @@
+#!/usr/bin/perl 
+
+use strict;
+use warnings;
+
+use File::Glob;
+use MP3::Tag;
+use Getopt::Long
+    qw(:config posix_default gnu_compat require_order bundling no_ignore_case);
+
+use constant DISC   =>  0;
+use constant TRACK  =>  1;
+use constant IGNORE => -1;
+
+my $root = $ENV{MUSIC};
+my ($dry_run, $force);
+
+my %order = ();
+
+GetOptions(
+    'n|dry-run' => \$dry_run,
+    'f|force'   => \$force,
+) or exit usage();
+
+chdir $root or die "Can't change to root directory $root: $!";
+my @discs = map { s{^($root/)?disc-}{}o; $_ } @ARGV ? @ARGV : glob('disc-*');
+
+foreach my $id (@discs) {
+    chdir "$root/disc-$id" or die;
+    my $metadata = 'metadata';
+    next if !$force && -e $metadata;
+    my @info_files = glob("cdda2wav/audio_*.inf");
+    next if !@info_files;
+    my %disc = ( 'id' => '.' );
+    my @tracks;
+    my $fh;
+    foreach my $f (@info_files) {
+        my $mp3 = MP3::Tag->new($f);
+        my ($title, $track, $artist, $album, $comment, $year, $genre) = $mp3->autoinfo;
+        $disc{'title'}{$album}   = 1;
+        $disc{'year'}{$year}     = 1;
+        $disc{'genre'}{$genre}   = 1;
+        $disc{'artist'}{$artist} = 1;
+        push @tracks, {
+            'id'     => sprintf('%04d', $id),
+            'title'  => $title,
+            'number' => $track,
+            'artist' => $artist,
+            'album'  => $album,
+            'year'   => $year,
+            'genre'  => $genre,
+        };
+    }
+    if (!$dry_run) {
+        open $fh, '>', $metadata or die;
+        select $fh;
+    }
+    foreach my $obj (\%disc, @tracks) {
+        my $oid = delete $obj->{'id'};
+        my @keys = sort { ($order{$a} ||= 99) <=> ($order{$b} ||= 99) || $a cmp $b } keys %$obj;
+        foreach my $key (@keys) {
+            my $val = $obj->{$key};
+            if (ref $val) {
+                print "$oid $key $_\n" for sort keys %$val;
+            }
+            else {
+                print "$oid $key $val\n";
+            }
+        }
+        print "\n";
+    }
+}
+

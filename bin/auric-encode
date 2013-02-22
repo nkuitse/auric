@@ -1,0 +1,11 @@
+#!/bin/zsh
+
+(( $#argv > 0 )) || set -- disc-*
+typeset disc
+for disc in $@:t; do
+    for f in $disc/*.wav(N); do
+        base=$f:r
+        print $'\e[34;1m'$base:t$'\e[0m'
+        [[ -e $base.mp3 ]] || lame --nohist --preset fast standard $base.{wav,mp3}
+    done
+done
