@@ -1,4 +1,6 @@
-#!/bin/zsh
+#!/bin/zsh -e
+
+cd ${MUSIC:-~/music}
 
 main() {
     typeset obj
@@ -9,7 +11,7 @@ main() {
 
 obj2file() {
     typeset obj=$1 base
-    set -- $obj/**/listen.*
+    set -- $obj/***/listen.*
     (( $#argv > 0 )) || return 2
     print -l "$@"
 }

@@ -1,0 +1,12 @@
+#!/bin/zsh -e
+
+cd ${MUSIC:-~/music}
+
+if (( $#argv == 0 )); then
+    set **/metadata
+else
+    for (( i = 1 ; i <= $#argv ; i++ )); do
+        argv[i]=${argv[i]}/metadata
+    done
+fi
+perl -ne 'print substr($ARGV, 0, -9), " ", $1, "\n" if m{^\. (?:title|album) (.+)}' $@

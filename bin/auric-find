@@ -1,5 +1,8 @@
 #!/bin/zsh
 
+: ${MUSIC:=~/music}
+export MUSIC
+
 main() {
     typeset opt filter=short-display
     typeset -a grepargs
@@ -12,15 +15,20 @@ main() {
     done
     shift $(( OPTIND - 1 ))
 
-    fgrep -h $grepargs "$@" ~/music/disc-*/metadata | $filter
+    fgrep $grepargs "$@" $MUSIC/**/metadata | $filter
 }
 
 short-display() {
-    awk '{ print substr($0, 1, 8) }' | sort -u
+    perl -ne '
+    if (m{^$ENV{MUSIC}/([^:]+)/metadata:(\.) (\w+) (.+)}) {
+        my ($obj, $key, $fld, $val) = ($1, $2, $3, $4);
+        $key = $key eq "." ? $obj : "$obj/$key";
+        print "$key $fld $val\n";
+    }'
 }
 
 long-display() {
-    cat
+    perl -ne 'print "$1 $2\n" if m{/([^/]+)/metadata:\. (?:title|album) (.+)}'
 }
 
 main "$@"
