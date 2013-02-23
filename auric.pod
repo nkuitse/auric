@@ -1,0 +1,212 @@
+=head1 NAME
+
+auric - music file organizer
+
+=head1 SYNOPSIS
+
+    auric COMMAND [ARG...]
+
+=head1 DESCRIPTION
+
+B<auric> manages a library of music that's organized in a simple system of
+files and directories.  It lets you import music from optical media and some
+day it might even let you import individual audio files.
+
+There are several things that it doesn't do:
+
+=over 4
+
+=item Create a database
+
+Databases suck.  Files rule.  Some day I might have it make a central index of
+everything, just to simplify and speed up searching, but if so it'll just be a
+big plain text file.
+
+=item Rename your audio files using the contents of their ID3 tags
+
+I don't like it when something renames files willy-nilly, and I B<really> don't
+like file names with spaces in them.
+
+=item Give you eye candy
+
+I wanted something that worked from the command line and didn't get in the way.
+And I don't have time to code a crappy GUI when I can write this sort of thing
+in a day or two.
+
+=item Reinvent the wheel
+
+Well, OK, that's a lie.  But it's a B<different> wheel and it's very, very
+small.
+
+=back
+
+You probably have your own, strongly held beliefs about the best way to
+organize B<your> music -- I do, and that's why I wrote B<auric>.  Your beliefs
+probably don't mesh with mine, but who knows? -- maybe they do.
+
+=head1 FILES
+
+(This section usually appears at the end of a man page, but in the case of
+B<auric> it's better to know about this stuff sooner.)
+
+B<auric> keeps files in a set of directories under I<$MUSIC>, one for each disc
+(using the CDDB identifier for the disc) and, within that, one for each track
+(using the track number).  Disc and track information (I<metadata>) is kept in
+a single file for each disc but copied into ID3 tags if desired.
+
+For example, here's a part of my music collection:
+
+    disc-0910aa02
+    |-- 0001
+    |   |-- listen.mp3
+    |   |-- master.wav
+    |   `-- tags
+    |-- 0002
+    |   |-- listen.mp3
+    |   |-- master.wav
+    |   `-- tags
+    |-- cdda2wav
+    |   |-- audio.cddb
+    |   |-- audio.cdindex
+    |   |-- audio_01.inf
+    |   |-- audio_01.wav -> ../0001/master.wav
+    |   |-- audio_02.inf
+    |   `-- audio_02.wav -> ../0002/master.wav
+    |-- cdda2wav.log
+    |-- metadata
+    `-- nodisc
+
+You can put anything else you want in here.  For example, B<auric> doesn't care
+about the file C<nodisc>; it just indicates that I don't have the disc itself.
+(I borrowed it from a friend -- ssshhhh, don't tell anyone!)
+
+The original files that B<cdda2wav> produced are stashed away, untouched, in a
+subdirectory in case they're needed later.  (There's even a command to restore
+them to the way they were.)  Or you can delete the masters, keep the discs, and
+re-rip them again later if you want to re-encode them.  (This is the way I do
+things for all but my most treasured albums; I have a big disc file that discs
+go in [in paper sleeves] after I rip them.)
+
+Because it's all filesystem-based, it's easy to create a playlist or a
+collection; you just create a directory of symlinks like this one:
+
+    b7
+    |-- 0001 -> ../disc-6f10c308/0005
+    |-- 0002 -> ../disc-6f10c308/0006
+    |-- 0003 -> ../disc-6f10c308/0007
+    `-- 0004 -> ../disc-6f10c308/0008
+
+Or you can use a command for that purpose, if I ever get around to writing it:
+
+    $ auric make b7 disc-6f10c308/{5..8}
+
+(I will, because I'm lazy.)
+
+=head1 ENVIRONMENT
+
+=over 4
+
+=item B<$MUSIC>
+
+The root of your music library.  Defaults to C<$HOME/music>.  Each disc's
+directory is placed in here, and a C<tmp> directory will be created in here to
+hold files as discs are being ripped.
+
+=back
+
+=head1 COMMANDS
+
+B<auric> has a number of (sub)commands:
+
+=over 4
+
+=item B<rip>
+
+Extract audio tracks from optical discs using B<cdda2wav> and organizing them
+into subdirectories in I<$MUSIC> according to their CDDB IDs.  Some of this is
+very Mac OS X-specific.  It loops indefinitely, ejecting each disc as it's
+finished.
+
+=item B<ingest> [I<disc>...]
+
+Move things around within a disc directory and create a C<metadata> file with
+disc and track information taken from the CDDB file.
+
+=item B<uningest> [I<disc>...]
+
+Put files back the way they were when B<cdda2wav> finished ripping a disc.  Any
+listening files are discarded.
+
+=item B<encode> [I<disc>...]
+
+Encode track master files (C<master.wav>) into MP3 "listening files"
+(C<listen.mp3>) using B<lame(1)>.  By default, this will look through your
+entire music library and encode anything that hasn't been done yet.
+
+=item B<edit> [I<disc>...]
+
+Edit the metadata for one or more discs using B<vim(1)>.
+
+=item B<mktags> [I<disc>...]
+
+Create a C<tags> file for each track in the specified disc(s) using the
+contents of C<metadata> that you have lovingly crafted.  The contents of each
+file will form the basis for the ID3 tags that are added to the C<listen.mp3>
+file.
+
+=item B<tag> [I<disc>...]
+
+Add ID3 tags to the MP3 files.  This will call B<auric encode> as needed to
+create the MP3 files.
+
+=item B<play> [I<disc>|I<track>...]
+
+Play music (tracks, discs, playlists -- whatever) using B<mocp>.
+
+=item B<find> I<string>
+
+Grep for disc and track metadata.  Case-insensitive and very rough.
+
+=item B<ls>
+
+List all discs (C<disc-*>) with their titles.
+
+=back
+
+=head1 DIAGNOSTICS
+
+Poor.  Most commands will exit with a non-zero status if anything goes wrong,
+but at this point there are no guarantees.  This is wrong and it will be fixed.
+
+=head1 PREREQUISITES
+
+B<auric> requires B<cdda2wav(1)>, B<lame(1)>, B<perl(1)>, B<zsh(1)>, and the
+Perl modules B<MP3::Tag>, B<File::Glob>, and B<Getopt::Long>.  Oh, and
+B<darb(1)> which is a little shell script to start and stop Mac OS X's
+B<diskarbitrationd(8)> which gets in the way of ejecting discs; bug me if you
+need that too.
+
+=head1 BUGS
+
+Quite a few, I would think.
+
+=head1 AUTHOR
+
+Paul Hoffman <nkuitse@nkuitse.com>
+
+=head1 COPYRIGHT
+
+Copyright 2013 Paul M. Hoffman.
+
+This module is free software; you can redistribute it and/or modify it under
+the same terms as Perl itself. See perldoc perlartistic.
+
+This program is distributed in the hope that it will be useful, but B<without
+any warranty>; without even the implied warranty of B<merchantability> or
+B<fitness for a particular purpose>.  So there.
+
+=head1 WHAT'S UP WITH THE NAME?
+
+Georges Auric + Latin I<auris>.  Come on, you could have googled that!
+
+=cut
