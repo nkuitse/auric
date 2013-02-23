@@ -16,7 +16,7 @@ install-man: auric.1
 	install -d $(MAN)
 	install auric.1 $(MAN)
 
-auric.1: auric.but
-	halibut --man=auric.1 auric.but
+auric.1: auric.pod
+	pod2man -c '' -r 'AURIC(1)' $< > $@
 
 .PHONY: default install install-bin link-bin install-man
