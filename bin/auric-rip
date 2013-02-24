@@ -14,10 +14,11 @@ typeset have_disc=false
 
 main() {
     typeset opt silent=false paranoia=true
-    while getopts :sP opt; do
+    while getopts :sPd: opt; do
         case $opt in
             (s) silent=true ;;
             (P) paranoia=false ;;
+            (d) fs_device=$OPTARG ;;
         esac
     done
     log
@@ -25,7 +26,7 @@ main() {
     typeset id job etc move
     typeset -a ripargs
     integer t0 dur min sec err
-    ripargs=( -no-hidden-track -M -x -vsummary,titles -cddb 1 -B )
+    ripargs=( -no-hidden-track -x -vsummary,titles -cddb 1 -B )
     ! $paranoia || ripargs+=( -paranoia )
     while true; do
         emit 'Insert a disc or press Q to quit... '
@@ -50,7 +51,7 @@ main() {
         cdda2wav -D $scsi_device $ripargs 2>&1 | tee cdda2wav.log | ${AURIC_BIN}/cdda2wav-watch | read newid
         err=${pipestatus[1]}
         chown -R $user .
-        organize-disc
+        ### organize-disc
 
         cd -
         if (( err == 0 )); then
@@ -89,7 +90,7 @@ main() {
 
 wait-for-disc() {
     print WAITING >&2
-    darb stop 2> /dev/null || fatal "Couldn\'t stop disk arbitrator"
+    #? darb stop 2> /dev/null || fatal "Couldn\'t stop disk arbitrator"
     # [[ ! -e $fs_device ]] || { umount $fs_device; sleep 1 }
     while [[ ! -e $fs_device ]]; do
         read -k -s -t 1 || continue
@@ -110,7 +111,7 @@ organize-disc() {
         mkdir $n
         mv $f $n/master.wav
     done
-    touch is:disc
+    # touch is:disc
 }
 
 rlog() {
@@ -129,7 +130,11 @@ tlog() {
 
 eject-disc() {
     $have_disc || return 0
-    darb start || fatal "Couldn\'t restart disk arbitrator"
+    #? darb start || fatal "Couldn\'t restart disk arbitrator"
+    if drutil eject; then
+        have_disc=false
+        return 0
+    fi
     integer tries=${1:-5}
     emit 'Ejecting disc...'
     while (( tries > 0 )); do
