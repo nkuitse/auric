@@ -1,11 +1,58 @@
 #!/bin/zsh
 
-(( $#argv > 0 )) || set -- disc-*
-typeset disc wav mp3
-for disc in $@:t; do
-    for wav in $disc/**/master.wav(N); do
-        mp3=$wav:h/listen.mp3
-        print $'\e[34;1m'$wav:h$'\e[0m'
-        [[ -e $mp3 ]] || lame --nohist --preset fast standard $wav $mp3
+main() {
+    typeset opt dry_run=false
+    while getopts :n opt; do
+        case $opt in
+            (n) dry_run=true ;;
+        esac
     done
-done
+    shift $(( OPTIND - 1 ))
+    (( $#argv > 0 )) || set -- disc-*
+    typeset obj wav mp3
+    typeset -a masters
+    TRAPINT() {
+        tput cnorm
+        print -l '' CANCELLED >&2
+        [[ -z $mp3 ]] || rm -f $mp3
+        exit 2
+    }
+    for obj in $@:t; do
+        masters=( $obj/**/master.wav(N) )
+        if (( $#masters == 0 )); then
+            masters=( $obj/audio_??.wav(N) )
+        fi
+        if (( $#masters > 0 )); then
+            # Disc hasn't been ingested yet
+            print "\e[34;1m${obj}\e[0m ($#masters tracks)" >&2
+            for wav in $masters; do
+                mp3=$wav:r.mp3
+                print -n "[    ] \e[35;1m00${wav[-6,-5]}\e[0m" >&2
+                if [[ -e $mp3 ]]; then
+                    print -n "\r[skip]" >&2
+                elif $dry_run; then
+                    print -n "\r[....]" >&2
+                else
+                    tput civis
+                    lame --nohist --preset fast standard $wav $mp3 2>&1 | show-lame-progress
+                    tput cnorm
+                fi
+                print >&2
+            done
+            $dry_run || auric ingest $obj
+        fi
+    done
+}
+
+show-lame-progress() {
+    perl -e '
+        $| = 1;
+        while (<STDIN>) {
+            $/ = "\r" if /ETA/;
+            printf STDERR "\r[%3d%%] ", $1 if /(\d+)%/;
+            last if $1 == 100;
+        }
+    '
+}
+
+main "$@"
