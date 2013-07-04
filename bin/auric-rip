@@ -3,58 +3,81 @@
 typeset fs_device=/dev/disk1
 typeset scsi_device=1,0,0
 
-typeset uid=$(id -u)
-(( uid == 0 )) || exec sudo $0 "$@"
-typeset user=${SUDO_USER:-nkuitse}
-
-cd ~/music/
-exec 3>> rip.log
-
 typeset have_disc=false
 
+### typeset uid=$(id -u)
+### (( uid == 0 )) || exec sudo $0 "$@"
+### typeset user=${SUDO_USER:-nkuitse}
+
+export MUSIC AURIC_JOBDIR
+
 main() {
-    typeset opt silent=false paranoia=true
-    while getopts :sPd: opt; do
+    typeset opt silent=false paranoia=false ingest=false edit=false mktags=false
+    while getopts :ietspd: opt; do
         case $opt in
+            (i) ingest=true ;;
+            (e) ingest=true; edit=true ;;
+            (t) ingest=true; mktags=true ;;
             (s) silent=true ;;
-            (P) paranoia=false ;;
+            (p) paranoia=true ;;
             (d) fs_device=$OPTARG ;;
         esac
     done
+
+    note 'Some disc operations require root'
+    sudo -v
+
+    cd ${MUSIC:=~/music}
+
+    exec 3>> rip.log
     log
     tlog 'Begin session'
     typeset id job etc move
-    typeset -a ripargs
-    integer t0 dur min sec err
+    typeset -a ripargs msg
+    integer t0 dur min sec cdda2wav_err
+    typeset blah numtracks disctitle
     ripargs=( -no-hidden-track -x -vsummary,titles -cddb 1 -B )
     ! $paranoia || ripargs+=( -paranoia )
     while true; do
         emit 'Insert a disc or press Q to quit... '
         wait-for-disc
+        sudo -v
 
         job=$(randhash)
         note "Beginning job $job"
 
         t0=$SECONDS
         note 'CDDB lookup...'
-        cd-discid $fs_device | read id etc
+        sudo umount $fs_device || true
+        sudo cd-discid $fs_device | read id etc
         if [[ -d disc-$id ]]; then
             eol
             eject-disc
             fatal "Disc $id appears to have been ripped already"
         fi
 
-        mkdir -p tmp/$job
-        cd tmp/$job
+        AURIC_JOBDIR=$MUSIC/tmp/$job
+        mkdir -p $AURIC_JOBDIR
+        cd $MUSIC/tmp/$job
 
         note "Ripping..."
-        cdda2wav -D $scsi_device $ripargs 2>&1 | tee cdda2wav.log | ${AURIC_BIN}/cdda2wav-watch | read newid
-        err=${pipestatus[1]}
-        chown -R $user .
+        cdda2wav -D $scsi_device $ripargs 2>&1 | tee cdda2wav.log | auric cdex | tee cdda2wav.parse | while read -A msg; do
+            case ${msg[1]} in
+                (disc)  case ${msg[2]} in
+                            (end)   break ;;
+                        esac ;;
+                (track) case ${msg[3]} in
+                            (begin) sudo -v ;;
+                        esac ;;
+            esac
+        done
+        cdda2wav_err=${pipestatus[1]}
+        note 'Ripping complete' status=$cdda2wav_err
+        sed -n '2p; 3q' cdda2wav.parse | read blah blah newid numtracks disctitle
+        ### chown -R $user .
         ### organize-disc
 
-        cd -
-        if (( err == 0 )); then
+        if (( cdda2wav_err == 0 )); then
             move=true
             $silent || sono -A -g 0.5 ships-bell .
             note 'Disc ripped successfully'
@@ -73,8 +96,12 @@ main() {
             $silent || sono loud/buzzer
             warn "Disc $id failed to rip"
         fi
+        cd $MUSIC
         if $move; then
             mv tmp/$job disc-$id
+            ! $ingest || auric ingest disc-$id
+            ! $edit   || auric edit   disc-$id
+            ! $mktags || auric mktags disc-$id
         else
             warn "Job $job must be cleaned up manually"
         fi
@@ -89,7 +116,7 @@ main() {
 }
 
 wait-for-disc() {
-    print WAITING >&2
+    # print WAITING >&2
     #? darb stop 2> /dev/null || fatal "Couldn\'t stop disk arbitrator"
     # [[ ! -e $fs_device ]] || { umount $fs_device; sleep 1 }
     while [[ ! -e $fs_device ]]; do
@@ -131,15 +158,15 @@ tlog() {
 eject-disc() {
     $have_disc || return 0
     #? darb start || fatal "Couldn\'t restart disk arbitrator"
-    if drutil eject; then
+    if sudo drutil eject; then
         have_disc=false
         return 0
     fi
     integer tries=${1:-5}
     emit 'Ejecting disc...'
     while (( tries > 0 )); do
-        umount $fs_device > /dev/null 2>&1 || true
-        ! eject $fs_device  > /dev/null 2>&1 || break
+        sudo umount $fs_device > /dev/null 2>&1 || true
+        ! sudo eject $fs_device  > /dev/null 2>&1 || break
         emit .
         sleep 1
         let tries--
