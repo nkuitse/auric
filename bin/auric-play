@@ -3,15 +3,23 @@
 cd ${MUSIC:-~/music}
 
 main() {
-    typeset obj
-    for obj in $@; do
-        obj2file $obj || exit 2
-    done | xargs mocp -c -p -a
+    typeset obj=$1 base
+    set -- $obj/**/listen.*(N)
+    (( $#argv > 0 )) || set -- $obj/*/listen.*(N)
+    (( $#argv > 0 )) || return 2
+    if (( $# == 1 )) && [[ $1 == *.url ]]; then
+        exec t +a mplayer $(cat $1)
+    else
+        mocp -c -p -a $@
+    fi
+    #for obj in $@; do
+    #    obj2file $obj || exit 2
+    #done | xargs mocp -c -p -a
 }
 
 obj2file() {
     typeset obj=$1 base
-    set -- $obj/***/listen.*
+    set -- $obj/**/listen.*
     (( $#argv > 0 )) || return 2
     print -l "$@"
 }
