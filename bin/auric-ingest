@@ -23,10 +23,10 @@ GetOptions(
 ) or exit usage();
 
 chdir $root or die "Can't change to root directory $root: $!";
-my @discs = map { s{^($root/)?disc-}{}o; $_ } @ARGV ? @ARGV : glob('disc-*');
+my @objs = map { s{^$root/}{}o; $_ } @ARGV ? @ARGV : glob('*');
 
-foreach my $id (@discs) {
-    chdir "$root/disc-$id" or die "Can't chdir to disc-$id: $!";
+foreach my $obj (@objs) {
+    chdir "$root/$obj" or die "Can't chdir to $obj: $!";
     my $metadata = 'metadata';
     next if !$force && -e $metadata;
     $dry_run or mkdir 'cdda2wav' or die "Can't mkdir cdda2wav: $!";
@@ -40,7 +40,7 @@ foreach my $id (@discs) {
         my $wav = "audio_$1.wav";
         my $mp3 = "audio_$1.mp3";
         my $id = sprintf('%04d', $1);
-        my $tags = MP3::Tag->new($mp3);
+        my $tags = MP3::Tag->new($mp3) || MP3::Tag->new($inf);
         my ($title, $tracknum, $artist, $album, $comment, $year, $genre) = $tags->autoinfo;
         $disc{'album'}{$album}   = 1;
         $disc{'year'}{$year}     = 1;
@@ -75,11 +75,11 @@ foreach my $id (@discs) {
             rename $_, "cdda2wav/$_" or die "Can't move $_ to cdda2wav: $!";
         }
     }
-    foreach my $obj (\%disc, @tracks) {
-        my $oid = delete $obj->{'id'};
-        my @keys = sort { ($order{$a} ||= 99) <=> ($order{$b} ||= 99) || $a cmp $b } keys %$obj;
+    foreach my $m (\%disc, @tracks) {
+        my $oid = delete $m->{'id'};
+        my @keys = sort { ($order{$a} ||= 99) <=> ($order{$b} ||= 99) || $a cmp $b } keys %$m;
         foreach my $key (@keys) {
-            my $val = $obj->{$key};
+            my $val = $m->{$key};
             if (ref $val) {
                 print "$oid $key $_\n" for sort keys %$val;
             }
