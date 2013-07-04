@@ -1,3 +1,13 @@
 #!/bin/zsh
 
-rsync -a --exclude=mirror ./ mirror/
+cd ${MUSIC:-~/music}
+(( $#argv > 0 )) || set disc-*
+for d in $@; do
+    print -n "[   ] $d " >&2
+    if rsync -a $d/ mirror/$d/; then
+        print "\r[ok ]" >&2
+    else
+        print "\r[\e[31;1merr\e[0m]" >&2
+    fi
+done
+# rsync -a $@ --exclude=mirror ./ mirror/
