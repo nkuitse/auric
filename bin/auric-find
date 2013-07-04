@@ -10,7 +10,7 @@ main() {
     while getopts :lwi opt; do
         case $opt in
             (l) filter=long-display ;;
-            ([wi]) grepargs+=( $opt ) ;;
+            ([wi]) grepargs+=( -$opt ) ;;
         esac
     done
     shift $(( OPTIND - 1 ))
@@ -20,7 +20,7 @@ main() {
 
 short-display() {
     perl -ne '
-    if (m{^$ENV{MUSIC}/([^:]+)/metadata:(\.) (\w+) (.+)}) {
+    if (m{^$ENV{MUSIC}/([^:]+)/metadata:(\S+) (\w+) (.+)}) {
         my ($obj, $key, $fld, $val) = ($1, $2, $3, $4);
         $key = $key eq "." ? $obj : "$obj/$key";
         print "$key $fld $val\n";
