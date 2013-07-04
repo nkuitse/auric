@@ -1,0 +1,68 @@
+#!/bin/zsh
+
+cd ${MUSIC:-~/music}
+(( $#argv > 0 )) || set -- *(/N)
+
+setopt nullglob
+
+typeset -A f2p p2f
+f2p=( d 2   i 3   l 4   m 5   r 6   t 7 )
+p2f=( 2 d   3 i   4 l   5 m   6 r   7 t )
+typeset empty_flags=+------
+
+main() {
+    typeset d flags
+    integer n
+    for d in $@; do
+        n=$(num-tracks $d)
+        flags=$(flags $d)
+        if [[ $flags == $empty_flags ]]; then
+            ! [[ $d == disc-* ]]          || flags[${f2p[d]}]=d
+            ! count 1  $d/metadata(N)     || flags[${f2p[i]}]=i
+            ! count $n $d/**/listen.mp3   || flags[${f2p[l]}]=l
+            ! count $n $d/**/master.wav   || flags[${f2p[m]}]=m
+            ! count $n $d/**/audio_??.inf || flags[${f2p[r]}]=r
+            ! count $n $d/**/tags         || flags[${f2p[t]}]=t
+            bare=${flags//-/}
+            [[ $base == '+' ]] || touch $d/$bare >&2
+        fi
+        printf '%s %4d %-14.14s %s\n' $flags $n $d "$(title $d)"
+    done
+}
+
+flags() {
+    typeset flags=$empty_flags
+    set -- $1/+*
+    if (( $#argv == 1 )); then
+        typeset f=$1:t
+        for (( i = 2 ; i <= $#f ; i++ )); do
+            c=${f[i]}
+            flags[${f2p[$c]}]=$c
+        done
+    fi
+    print -- $flags
+}
+
+num-tracks() {
+    set -- $1/[0-9][0-9][0-9][0-9]
+    (( $#argv > 0 )) || set -- $1/audio_??.wav
+    (( $#argv > 0 )) || set -- $1/audio_??.mp3
+    print $#argv
+}
+
+count() {
+    integer n=$1; shift
+    (( $#argv > 0 && $#argv == n ))
+}
+
+title() {
+    if [[ -e $1/@title ]]; then
+        cat $1/@title
+    else
+        typeset title="$(perl -ne 'print if s/^\. (title|album) //' $1/metadata 2> /dev/null)"
+        print -- $title > $1/@title
+        print -- $title
+    fi
+}
+
+main "$@"
