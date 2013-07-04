@@ -1,0 +1,30 @@
+#!/bin/zsh
+
+main() {
+    (( $#argv > 1 )) || usage
+    typeset dest=$1; shift
+    cd ${MUSIC:-~/music} || fatal
+    mkdir $dest || fatal
+    typeset i=1
+    while (( $#argv > 0 )); do
+        obj=$1; shift
+        case $obj in
+            (*/*) obj=$obj:h/$(printf '%04d' $obj:t)
+                  [[ -e $obj ]] || fatal "No such object: $obj"
+                  print "$dest/$(printf '%04d' $i) -> $obj" >&2
+                  ln -s ../$obj $dest/$(printf '%04d' $i)
+                  ;;
+            (*)   argv=( $obj/[0-9][0-9][0-9][0-9](N) $argv )
+                  let i--
+                  ;;
+        esac
+        let i++
+    done
+}
+
+fatal() {
+    (( $#argv == 0 )) || print "FATAL: $*" >&2
+    exit 2
+}
+
+main "$@"
