@@ -21,11 +21,7 @@ main() {
     cmdexec=$AURIC_BIN/auric-$cmd
     [[ -x $cmdexec && ! -d $cmdexec ]] || usage "Unrecognized command: $cmd"
     cd $MUSIC || fatal 2 "Can't chdir to $MUSIC"
-    #if $debug; then
-    #    /usr/bin/perl -d $cmdexec "$@"
-    #else
-        $cmdexec "$@"
-    #fi
+    $cmdexec "$@"
 }
 
 fatal() {
