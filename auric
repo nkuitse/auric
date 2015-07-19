@@ -1,33 +1,728 @@
-#!/bin/zsh
+#!/usr/bin/perl
 
-export MUSIC AURIC_BIN PATH
+use strict;
+use warnings;
 
-: ${MUSIC:=$HOME/music}
-: ${AURIC_BIN:=/usr/local/auric/bin}
-PATH=${AURIC_BIN}:$PATH
+package Auric;
 
-main() {
-    typeset opt debug=false
-    while getopts :r opt; do
-        case $opt in
-            (d) debug=true ;;
-            (r) MUSIC=$OPTARG ;;
-        esac
-    done
-    shift $(( OPTIND - 1 ))
-    (( $#argv > 0 )) || usage
-    typeset cmd cmdexec
-    cmd=$1; shift
-    cmdexec=$AURIC_BIN/auric-$cmd
-    [[ -x $cmdexec && ! -d $cmdexec ]] || usage "Unrecognized command: $cmd"
-    cd $MUSIC || fatal 2 "Can't chdir to $MUSIC"
-    $cmdexec "$@"
+use File::Glob;
+use IPC::Open3 qw(open3);
+use MP3::Tag;
+use CDDB_get qw(get_cddb);
+use Cwd;
+use File::Find qw(find);
+use POSIX qw(strftime);
+use Getopt::Long
+    qw(:config posix_default gnu_compat require_order bundling no_ignore_case);
+
+sub fatal;
+
+if (!caller) {
+    __PACKAGE__->run;
 }
 
-fatal() {
-    integer code=$1; shift
-    print "$*" >&2
-    exit $code
+sub run {
+    my ($cls, %opt) = @_;
+    %opt = ( $cls->defaults, %opt );
+    GetOptions(
+        'm|music=s' => \$opt{'music_dir'},
+        'd|dir=s' => \$opt{'dot_dir'},
+    ) or die;
+    my $cmd = @ARGV ? shift @ARGV : 'help';
+    my $self = bless {
+        'config' => { $cls->defaults, %opt },
+    }, $cls;
+    $self->init;
+    my $code = $self->can('cmd_' . $cmd) or exit usage();
+    $code->($self);
 }
 
-main "$@"
+sub device { @_ > 1 ? $_[0]->{'config'}{'device'} = $_[1] : $_[0]->{'config'}{'device'} }
+
+sub defaults {
+    return (
+        'device' => '/dev/cdrom',
+    );
+}
+
+sub init {
+    my ($self) = @_;
+    my $conf = $self->{'config'};
+    my $music_dir = $conf->{'music_dir'} ||= $ENV{'MUSIC'} || $ENV{'HOME'} . '/music';
+    my $dot_dir   = $conf->{'dot_dir'}   ||= $music_dir . '/.auric';
+    $self->read_config($dot_dir . '/conf');
+}
+
+sub read_config {
+    my ($self, $dir) = @_;
+    my $conf = $self->{'config'};
+    my $f = "$dir/auric.conf";
+    open my $fh, '<', $f or die "Can't open config file $f: $!";
+    while (<$fh>) {
+        next if /^\s*(#.*)?$/;  # Skip blank lines and comments
+        chomp;
+        die "Bad config line: $_" if !/^([-\w]+) +(.*)$/;
+        my ($key, $val) = ($1, decode($2));
+        $key =~ tr/-/_/;
+        $conf->{$key} = $val;
+    }
+    close $fh;
+}
+
+sub dispatch {
+    my ($self) = @_;
+}
+
+sub decode {
+    # TODO: Allow for quotes, etc.?
+    return $_[0];
+}
+
+sub config {
+    my $self = shift;
+    my $key = shift;
+    my $conf = $self->{'config'};
+    return @_ ? $conf->{$key} = shift() : $conf->{$key};
+}
+
+sub wait_for_disc {
+    while (1) {
+        local $_ = `cd-discid 2> /dev/null`;
+        if (defined $_) {
+            chomp;
+            my ($id, $count, @etc) = split / /;
+            return $id;
+        }
+        sleep 1;
+    }
+}
+
+sub eject_disc {
+    `eject`;
+}
+
+sub rand_hash {
+    use Digest;
+    my $hash = Digest->new('SHA-1');
+    $hash->add($$, rand, time);
+    return $hash->hexdigest;
+}
+
+sub now {
+    return strftime('%Y-%m-%d %H:%M:%S', localtime);
+}
+
+# --- Command handlers
+
+sub cmd_rip {
+    my ($self) = @_;
+    my $dev = $self->device;
+    my $music_dir = $self->config('music_dir');
+    chdir $music_dir or die "Can\'t chdir to $music_dir $!";
+    open my $fhlog, '>>', 'rip.log' or die;
+    printf $fhlog "%s Begin session\n", now();
+    while (1) {
+        my $id = $self->wait_for_disc;
+        my $job = $self->rand_hash;
+        if (-d 'disc-' . $id) {
+            print STDERR "Disc $id appears to have been ripped already\n";
+            $self->eject_disc;
+            next;
+        }
+        foreach ('job', $job) {
+            -d $_ or mkdir $_ or fatal $!;
+            chdir $_ or fatal $!;
+        }
+        my $t0 = time;
+        my $id_again = $self->cdda2wav($fhlog);
+        my $tn = time;
+        $self->eject_disc;
+        chdir $music_dir or fatal $!;
+        rename "job/$job", "disc-$id" or fatal "Can't move disc-$id: $!";
+        printf $fhlog "  ok Disc %s : %2dm %2ds\n", $id, int(($tn - $t0) / 60), (($tn - $t0) % 60);
+    }
+    printf $fhlog "%s End of session\n", now();
+    close $fhlog;
+}
+
+sub cmd_ingest {
+    my ($self) = @_;
+    my %opt;
+    GetOptions(
+        'n|dry-run' => \$opt{'dry_run'},
+        'f|force'   => \$opt{'force'},
+        'e|encode'  => \$opt{'encode'},
+    ) or exit usage();
+    my $music_dir = $self->config('music_dir');
+    chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
+    foreach my $disc (@ARGV) {
+        while (!-d $disc) {
+            $disc =~ s{^$music_dir/(?=.+)}{} or fatal "No such disc $disc";
+        }
+        if (my $res = $self->_ingest_disc($disc, %opt)) {
+            print STDERR "[ok  ] $disc\n";
+        }
+        else {
+            print STDERR "[skip] $disc\n";
+        }
+    }
+}
+
+sub cmd_encode {
+    my ($self) = @_;
+    my $dry_run;
+    GetOptions(
+        'n|dry-run' => \$dry_run,
+    ) or exit usage();
+    my $music_dir = $self->config('music_dir');
+    chdir $music_dir or die "Can\'t chdir to $music_dir $!";
+    foreach my $obj (@ARGV) {
+        my @masters = glob("$obj/*/master.wav");
+        $self->_encode(basename($obj), @masters) if @masters;
+    }
+}
+
+sub _start_lame {
+    my ($self, $wav, $mp3) = @_;
+    open my $fh, '-|', qw(stderr /dev/stdout lame --nohist --preset fast standard), $wav, $mp3
+        or fatal $!;
+    return $fh;
+}
+
+sub _encode {
+    my $self = shift;
+    my $objname = shift;
+    my $n = scalar @_;
+    my @mp3s;
+    my $fmt = "\r[%-4.4s] %-3.3s%s %s";
+    foreach my $wav (@_) {
+        my $id = basename(dirname($wav));
+        (my $mp3 = $wav) =~ s{(?<=/)master\.wav$}{listen.mp3};
+        if (!-e $mp3) {
+            push @mp3s, $mp3;
+            printf STDERR $fmt, $id, sprintf('%3d', 0), '%', $objname;
+            my $fh = $self->_start_lame($wav, $mp3);
+            while (<$fh>) {
+                $/ = "\r" if /ETA/;
+                if (/(\d+)%/) {
+                    printf STDERR $fmt, $id, sprintf('%3d', $1), '%', '';
+                    if ($1 == 100) {
+                        close $fh;
+                        last;
+                    }
+                }
+            }
+        }
+    }
+    printf STDERR $fmt, 'done', '', '', "$objname\n";
+    return @mp3s;
+}
+
+sub cmd_play {
+    my ($self) = @_;
+    my $music_dir = $self->config('music_dir');
+    chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
+    my @files;
+    my %opt = (
+        'wanted' => sub {
+            push @files, $File::Find::name if /^listen\.\w+$/;
+        },
+        'follow' => 1,
+    );
+    File::Find::find(\%opt, @ARGV);
+    if (@files == 1 && $files[0] =~ /\.url$/) {
+        exec(qw(mplayer), @files);
+    }
+    else {
+        exec(qw(mocp -c -p -a), @files);
+    }
+}
+
+sub cmd_find {
+    my ($self) = @_;
+    my ($word, $field, $insensitive);
+    GetOptions(
+        'w|word-regexp' => \$word,
+        'f|field=s' => \$field,
+        'i' => \$insensitive,
+    ) or exit usage();
+    exit usage() if !@ARGV;
+    my $pfx = $insensitive ? '(?i)' : '';
+    my @patterns = map { qr/$pfx$_/ } @ARGV;
+    my $music_dir = $self->config('music_dir');
+    chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
+    my @indexes;
+    if ($field) {
+        @indexes = map { basename($_) } grep { -e } "index/$field";
+        exit usage() if !@indexes;
+    }
+    else {
+        @indexes = map { basename($_) } grep { -f } glob('index/*');
+        exit usage() if !@indexes;
+    }
+    foreach my $index (@indexes) {
+        open my $fh, '<', "index/$index" or fatal $!;
+        while (<$fh>) {
+            next if !/^(\S+) (.+)/;
+            my ($obj, $val) = ($1, $2);
+            print "$obj $index $val\n" if grep { $val =~ $_ } @patterns;
+        }
+        close $fh;
+    }
+}
+
+sub cmd_ll {
+    my ($self) = @_;
+    my $music_dir = $self->config('music_dir');
+    chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
+    my %f2p = qw(
+        d 1
+        i 2
+        l 3
+        m 4
+        r 5
+        t 6
+    );
+    @ARGV = $self->dirs if !@ARGV;
+    my $twidth = ($ENV{'COLUMNS'} || 80) - 42;
+    foreach my $disc (@ARGV) {
+        my $flagstr = '+------';
+        my ($flags) = map { basename($_) } glob("$disc/+*");
+        $flags = '+' if !defined $flags;
+        foreach (split //, $flags) {
+            substr($flagstr, $f2p{$_} ||= scalar(keys %f2p), 1) = $_;
+        }
+        my @tracks = grep { -d } glob("$disc/0???");
+        my $title = -e "$disc/\@title" ? read_file("$disc/\@title") : '(no title)';
+        chomp $title;
+        printf "%-7.7s %4d %-24.24s %-${twidth}s\n", $flagstr, scalar(@tracks), basename($disc), $title;
+    }
+}
+
+sub read_file {
+    my ($f) = @_;
+    open my $fh, '<', $f or fatal "Can't open $f for reading: $!";
+    local $/;
+    my $str = <$fh>;
+    close $fh;
+    return $str;
+}
+
+sub dirs {
+    my ($self) = @_;
+    my $music_dir = $self->config('music_dir');
+    return grep { -d } glob("$music_dir/*");
+}
+
+sub cmd_reindex {
+    my ($self) = @_;
+    my $music_dir = $self->config('music_dir');
+    chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
+    my @indexes = grep { -f } glob('index/*');
+    my %fh = map {
+        open my $fh, '>', $_ or fatal;
+        basename($_) => $fh;
+    } @indexes;
+    my @discs = glob('disc-*');
+    foreach my $disc (@discs) {
+        open my $fh, '<', "$disc/metadata" or next;
+        printf STDERR "[%-4.4s] %s", '', $disc;
+        while (<$fh>) {
+            next if /^\s*(#.*)?$/;
+            chomp;
+            my ($id, $key, $val) = split / /, $_, 3;
+            my $fhi = $fh{$key} || next;
+            if ($id eq '.') {
+                print $fhi "$disc $val\n";
+            }
+            else {
+                printf STDERR "\r[%-4.4s]", 0, $disc;
+                print $fhi "$disc/$id $val\n";
+            }
+        }
+        close $fh;
+        print STDERR "\r[ ok ] $disc\n";
+    }
+    close $_ for values %fh;
+}
+
+sub forobj {
+    my $self = shift;
+    my $code = pop;
+    my $music_dir = $self->config('music_dir');
+    chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
+    my @ids = map { s{^($music_dir/)}{}o; $_ } @_ ? @_ : glob('disc-*');
+    foreach my $id (@ids) {
+        chdir "$music_dir/$id" or die "Can't chdir to $id: $!";
+        $code->($id);
+    }
+}
+
+sub cmd_tag {
+    my ($self) = @_;
+    my $dry_run;
+    GetOptions(
+        'n|dry-run' => \$dry_run,
+    ) or exit usage();
+    $self->forobj(@ARGV, sub {
+        my ($id) = @_;
+        print STDERR "disc $id\n\n" if $dry_run;
+        my %seen;
+        find({
+            'wanted' => sub {
+                return if $seen{$File::Find::dir}++;
+                if ($_ eq 'listen.mp3' && -e 'tags') {
+                    print STDERR basename($File::Find::dir), "\n";
+                    return if $dry_run;
+                    my $mp3 = MP3::Tag->new($_);
+                    my $h = read_tags('tags');
+                    $mp3->update_tags($h);
+                }
+            },
+            'follow' => 1,
+        }, '.');
+    });
+}
+
+sub cmd_mkpls {
+    my ($self) = @_;
+    my ($force, $dry_run);
+    GetOptions(
+        'f|force' => \$force,
+        'n|dry-run' => \$dry_run,
+    ) or exit usage();
+    $self->forobj(@ARGV, sub {
+        my ($id) = @_;
+        print STDERR "disc $id\n\n" if $dry_run;
+        my %seen;
+        return if !$force && -e 'playlist.pls';
+        my @files = glob('*/listen.mp3');
+        return if !@files;
+        my @tracks = map { basename(dirname($_)) } @files;
+        open my $fh, '>', 'playlist.pls' or die;
+        print $fh "[playlist]\n\n";
+        my $n = 0;
+        foreach my $t (@tracks) {
+            $n++;
+            my $mp3 = MP3::Tag->new("$t/listen.mp3");
+            my ($title, $track, $artist, $album, $comment, $year, $genre) = $mp3->autoinfo;
+            my $seconds = $mp3->total_secs_int;
+            print $fh <<"EOS";
+File$n=$t/listen.mp3
+Title$n=$album - $title / $artist
+Length$n=$seconds
+
+EOS
+        }
+        print $fh <<"EOS";
+NumberOfEntries=$n
+Version=2
+EOS
+    });
+}
+
+sub cmd_mktags {
+    my ($self) = @_;
+    my ($dry_run, $force);
+    GetOptions(
+        'n|dry-run' => \$dry_run,
+        'f|force'   => \$force,
+    ) or exit usage();
+    my $music_dir = $self->config('music_dir');
+    chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
+    my @discs = map { s{^($music_dir/)?disc-}{}o; $_ } @ARGV ? @ARGV : glob('disc-*');
+    foreach my $id (@discs) {
+        chdir "$music_dir/disc-$id" or die "Can't chdir to disc-$id: $!";
+        print STDERR "disc $id\n\n" if $dry_run;
+        my ($disc, $tracks) = read_metadata('metadata');
+        my @dirs = grep { /^\d+$/ } glob('*');
+        foreach my $t (sort keys %$tracks) {
+            print STDERR "track $t\n" if $dry_run;
+            if (-e "$t/tags" && ! $force) {
+                #print STDERR "[\e[32;1mskip\e[0m] $t\n";
+                next;
+            }
+            write_tags("$t/tags", $tracks->{$t}, $disc, $dry_run);
+            #print STDERR "[\e[32;1mok  \e[0m] $t\n";
+            print STDERR "\n" if $dry_run;
+        }
+    }
+}
+
+sub have_disc {
+    my ($self) = @_;
+    my @command = ( qw(udevadm info --query property), '--name' => $self->device );
+    open my $fh, '-|', @command or fatal "Can't run udevadm: $!";
+    while (<$fh>) {
+        return 1 if /^ID_CDROM_MEDIA_CD=1/;
+    }
+    return;
+}
+### sub wait_for_disc {
+###     my ($self) = @_;
+###     return if $self->have_disc;
+###     my $dev = $self->device;
+###     my @command = qw(udevadm monitor --udev --property);
+###     open my $fh, '-|', @command or fatal "Can't run udevadm: $!";
+###     while (<$fh>) {
+###         return if /^DEVLINKS=(?:\S+ )*$dev(?: |$)/;
+###     }
+###     fatal;
+### }
+
+sub _ingest_disc {
+    my ($self, $disc, %opt) = @_;
+    my $metadata = "$disc/metadata";
+    my $dest     = "$disc/cdda2wav";
+    my @inf_files = glob("$disc/audio_*.inf");
+    # $disc/audio_*.inf --> $dist/cddawav/*.inf
+    return if !@inf_files;
+    return if !$opt{'force'} && -e $metadata;
+    $opt{'dry_run'} or makedir($dest);
+    my %disc = ( 'id' => '.' );
+    my (@tracks, %tags, @masters, @listens, $fh);
+    foreach my $inf (@inf_files) {
+        next if $inf !~ m{/audio_(\d\d)\.inf$};
+        my $t = $1;
+        my $tnum = sprintf('%04d', $t);
+        my $tdir = "$disc/$tnum";
+        my $tags = MP3::Tag->new($inf);
+        my ($title, $tracknum, $artist, $album, $comment, $year, $genre) = $tags->autoinfo;
+        $disc{'album' }{$album } = 1;
+        $disc{'year'  }{$year  } = 1;
+        $disc{'genre' }{$genre } = 1;
+        $disc{'artist'}{$artist} = 1;
+        push @tracks, {
+            'id'     => $tnum,
+            'title'  => $title,
+            'track'  => $tracknum,
+            'artist' => $artist,
+        };
+        next if $opt{'dry_run'};
+        makedir($tdir);
+        rename $inf, "$disc/cdda2wav/".basename($inf) or fatal "Can't move $inf: $!";
+        my $wav = "$disc/audio_$t.wav";
+        if (-e $wav) {
+            my $master = "$tdir/master.wav";
+            rename $wav, $master or fatal "Can't move $wav: $!";
+            push @masters, $master;
+            my $link = "$disc/cdda2wav/".basename($wav);
+            -e $link or symlink "../$tnum/master.wav", $link or fatal "Can't create symlink $disc/$tnum/master.wav: $!";
+        }
+        my $mp3 = "$disc/audio_$t.mp3";
+        my $listen = "$tdir/listen.mp3";
+        if (-e $mp3 && !-e $listen) {
+            rename $mp3, $listen or fatal "Can't move $mp3 $!";
+            push @listens, $listen;
+            my $link = "$disc/cdda2wav/".basename($mp3);
+            -e $link or symlink "../$tnum/listen.mp3", $link or fatal "Can't create symlink $disc/$tnum/listen.mp3: $!";
+        }
+    }
+    if (!$opt{'dry_run'}) {
+        open $fh, '>', $metadata or fatal;
+        select $fh;
+        foreach (grep { -e "$disc/$_" } qw(audio.cddb audio.cdindex)) {
+            rename "$disc/$_", "$dest/$_" or fatal "Can't move $_ to $dest: $!";
+        }
+        if ($opt{'encode'} && @masters) {
+            my @mp3s = $self->_encode(basename($disc), @masters);
+            foreach (sort { $a cmp $b } keys %tags) {
+                1;
+            }
+        }
+    }
+    my %order;
+    foreach my $m (\%disc, @tracks) {
+        my $oid = delete $m->{'id'};
+        my @keys = sort { ($order{$a} ||= 99) <=> ($order{$b} ||= 99) || $a cmp $b } keys %$m;
+        foreach my $key (@keys) {
+            my $val = $m->{$key};
+            if (ref $val) {
+                print "$oid $key $_\n" for sort keys %$val;
+            }
+            else {
+                print "$oid $key $val\n";
+            }
+        }
+        print "\n";
+    }
+    return 1;
+}
+
+sub cdda2wav {
+    my ($self, $fhlog) = @_;
+    my $fh;
+    my $pid = open3(undef, $fh, $fh,
+        'cdda2wav',
+            '-D' => $self->config('device'),
+            '-x',
+            '-vsummary,titles',
+            '-cddb',
+            1,
+            '-B'
+    ) || fatal "Can't cdda2wav: $!";
+    open my $fhparse, '>', 'cdda2wav.parse' or fatal $!;
+    my $discid = '-';
+    my @title;
+    my ($num_tracks, $started);
+    while (<$fh>) {
+        print $fhlog $_ if $fhlog;
+        print $fhparse "disc prep\n" if !$started;
+        $started = 1;
+        if (/AUDIOtrack/) {
+            my $info = <$fh>;
+            $num_tracks = $1 if $info =~ /^\s*1-\s*(\d+)/;
+        }
+        if (/^CDDB discid: 0x([0-9a-f]{8})/) {
+            $discid = $1;
+        }
+        elsif (/^Album title: +'(.+)'(.*)/) {
+            $title[0] = $1 . $2;
+            $title[0] =~ s/\t.*//;
+        }
+        elsif (/^Track +(\d+): '(.+)'/ && $1 > 0) {
+            $title[$1] = $2;
+            $num_tracks = $1 if $1 > $num_tracks;
+        }
+        elsif (/^percent_done:/) {
+            @title = ('[Untitled disc]') if !@title;
+            print STDERR "\e[35;1m$discid \e[36;1m$title[0]\e[0m\n";
+            print $fhparse "disc begin $discid $num_tracks $title[0]\n";
+            my $n = 1;
+            my $t = $title[$n] ||= '[Untitled track]';
+            printf STDERR "       %3d. %s", $n, $t;
+            local $/ = "\r";
+            while (<$fh>) {
+                if (/100%/) {
+                    my $result;
+                    if (/track +(\d+) .*recorded (.+)/) {
+                        my (undef, $adv) = ($1, $2);
+                        my $color = 32;
+                        if ($adv eq 'successfully') {
+                            $result = ' ok ';
+                        }
+                        elsif ($adv =~ /with minor problems/) {
+                            $result = ' ok ';
+                        }
+                        else {
+                            $result = 'warn';
+                            $color = 33;
+                        }
+                        printf STDERR "\r  \e[${color};1m%-4.4s\e[0m %3d. %s \n", $result, $n, $t;
+                        my $ignore1 = <$fh>;
+                        my $ignore2 = <$fh>;
+                        $result =~ s/^ +| +$//g;
+                    }
+                    print $fhparse "track $n done $result\n";
+                    $t = $title[++$n] ||= '[Untitled track]';
+                    print $fhparse "track $n begin $t\n" if $n <= $num_tracks;
+                }
+                elsif (/(\d+)%/) {
+                    print $fhparse "track $n progress $1\n";
+                    printf STDERR "\r  %3d%% %3d. %s ", $1, $n, $t;
+                }
+            }
+        }
+    }
+    waitpid($pid, 0);
+    fatal "auric rip failed: $!" if $?;
+    return $discid;
+}
+
+sub read_tags {
+    my ($f) = @_;
+    my %tag;
+    open my $fh, '<', $f or die "Can't open file $f: $!";
+    while (<$fh>) {
+        chomp;
+        next if /^\s*(?:#.*)?$/;  # Skip blank lines and comments
+        my ($key, $val) = split /\s+/, $_, 2;
+        $tag{$key} = $val;
+    }
+    close $fh;
+    return \%tag;
+}
+
+sub read_metadata {
+    my ($f) = @_;
+    my (%disc, %track);
+    open my $fh, '<', $f or die "Can't open file $f: $!";
+    while (<$fh>) {
+        if (/^\. (\S+) (.*)/) {
+            $disc{$1} = $2;
+        }
+        elsif (/^(\d+) (\S+) (.*)/) {
+            $track{$1}{$2} = $3;
+            $track{$1}{'id'} ||= $1;
+        }
+    }
+    $_->{'album'} ||= $disc{'title'} || $disc{'album'} for values %track;
+    close $fh;
+    return \%disc, \%track;
+}
+
+sub write_tags {
+    my ($f, $track, $disc, $dry_run) = @_;
+    my $perm = 0644;
+    my $fh;
+    if (!$dry_run) {
+        if (-e $f) {
+            $perm = (stat $f)[2] & 07777;
+            chmod($perm | 0600, $f);
+        }
+        open $fh, '>', $f or die "Can't open file $f for writing: $!";
+        select $fh;
+    }
+    my %keys = map { $_ => 1 } (keys %$track, keys %$disc);
+    foreach my $key (sort keys %keys) {
+        my ($val) = grep { defined $_ } $track->{$key}, $disc->{$key};
+        print "$key $val\n" if defined $val;
+    }
+    if (!$dry_run) {
+        chmod($perm & 0444, $fh);
+        close $fh;
+    }
+}
+sub dirname {
+    my ($file) = @_;
+    $file =~ s{/[^/]+$}{};
+    return $file;
+}
+
+sub basename {
+    my ($file) = @_;
+    $file =~ s{.+/}{};
+    return $file;
+}
+
+sub makedir {
+    my ($dir) = @_;
+    -d $dir or mkdir $dir or fatal "Can't mkdir $dir $!";
+}
+
+sub fatal {
+    print STDERR $_, "\n" for @_;
+    exit 2;
+}
+
+1;
+
+__END__
+my %cd=get_cddb(\%config);
+        unless(defined $cd{title}) {
+          die "no cddb entry found";
+        }
+
+        # do somthing with the results
+
+        print "artist: $cd{artist}\n";
+        print "title: $cd{title}\n";
+        print "category: $cd{cat}\n";
+        print "cddbid: $cd{id}\n";
+        print "trackno: $cd{tno}\n";
+        my $n=1;
+        foreach my $i ( @{$cd{track}} ) {
+          print "track $n: $i\n";
+          $n++;
+        }
+

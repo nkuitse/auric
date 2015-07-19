@@ -1,0 +1,33 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use MP3::Tag;
+use File::Basename qw(basename dirname);
+
+foreach my $dir (@ARGV) {
+    my @files = glob("$dir/*/listen.mp3");
+    next if !@files;
+    my @tracks = map { basename(dirname($_)) } @files;
+    open my $fh, '>', "$dir/playlist.pls" or die;
+    select $fh;
+    print $fh "[playlist]\n\n";
+    my $n = 0;
+    foreach my $t (@tracks) {
+        $n++;
+        my $mp3 = MP3::Tag->new("$dir/$t/listen.mp3");
+        my ($title, $track, $artist, $album, $comment, $year, $genre) = $mp3->autoinfo;
+        my $seconds = $mp3->total_secs_int;
+        print <<"EOS";
+File$n=$t/listen.mp3
+Title$n=$album - $title / $artist
+Length$n=$seconds
+
+EOS
+    }
+    print <<"EOS";
+NumberOfEntries=$n
+Version=2
+EOS
+}
