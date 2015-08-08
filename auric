@@ -360,23 +360,26 @@ sub forobj {
 
 sub cmd_tag {
     my ($self) = @_;
-    my $dry_run;
+    my ($verbose, $dry_run);
     GetOptions(
-        'n|dry-run' => \$dry_run,
+        'n|dry-run' => sub { $dry_run = $verbose = 1 },
+        'v|verbose' => \$verbose,
     ) or exit usage();
     $self->forobj(@ARGV, sub {
         my ($id) = @_;
-        print STDERR "disc $id\n\n" if $dry_run;
+        print STDERR "disc $id\n\n" if $verbose;
         my %seen;
         find({
             'wanted' => sub {
-                return if $seen{$File::Find::dir}++;
+                print STDERR $_, "\n" if $verbose;
+                return if $seen{$File::Find::dir};
                 if ($_ eq 'listen.mp3' && -e 'tags') {
                     print STDERR basename($File::Find::dir), "\n";
                     return if $dry_run;
                     my $mp3 = MP3::Tag->new($_);
                     my $h = read_tags('tags');
                     $mp3->update_tags($h);
+                    $seen{$File::Find::dir}++;
                 }
             },
             'follow' => 1,
