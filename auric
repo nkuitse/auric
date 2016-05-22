@@ -6,6 +6,7 @@ use warnings;
 package Auric;
 
 use File::Glob;
+use IO::Handle;
 use IPC::Open3 qw(open3);
 use MP3::Tag;
 use CDDB_get qw(get_cddb);
@@ -14,6 +15,8 @@ use File::Find qw(find);
 use POSIX qw(strftime);
 use Getopt::Long
     qw(:config posix_default gnu_compat require_order bundling no_ignore_case);
+
+use constant DEBUG => 0;
 
 sub fatal;
 
@@ -86,14 +89,17 @@ sub config {
 }
 
 sub wait_for_disc {
+    print STDERR "\e[1mWaiting for a disc...";
     while (1) {
         local $_ = `cd-discid 2> /dev/null`;
-        if (defined $_) {
+        if (defined $_ && length $_) {
             chomp;
             my ($id, $count, @etc) = split / /;
+            print STDERR "\e[0m\n";
             return $id;
         }
-        sleep 1;
+        print STDERR '.';
+        sleep 3;
     }
 }
 
@@ -123,8 +129,11 @@ sub cmd_rip {
     printf $fhlog "%s Begin session\n", now();
     while (1) {
         my $id = $self->wait_for_disc;
+        last if !defined $id;
         my $job = $self->rand_hash;
-        if (-d 'disc-' . $id) {
+        print STDERR "\e[35;1mJob $job\e[0m\n" if DEBUG;
+        my $disc_dir = "disc-$id";
+        if (-e "$disc_dir/audio.cddb" || (-d $disc_dir && !rmdir $disc_dir)) {
             print STDERR "Disc $id appears to have been ripped already\n";
             $self->eject_disc;
             next;
@@ -556,21 +565,28 @@ sub _ingest_disc {
 
 sub cdda2wav {
     my ($self, $fhlog) = @_;
-    my $fh;
-    my $pid = open3(undef, $fh, $fh,
+    my $dev = $self->config('device');
+    my @cmd = (
         'cdda2wav',
-            '-D' => $self->config('device'),
+            '-D' => $dev,
             '-x',
             '-vsummary,titles',
             '-cddb',
             1,
-            '-B'
-    ) || fatal "Can't cdda2wav: $!";
+            '-B',
+            'out-fd=1'
+    );
+    print STDERR "\e[36;1m@cmd\e[0m\n" if DEBUG;
+    my $pid = open my $fh, '-|', @cmd
+        or fatal "Can't cdda2wav: $!";
+    $fh->autoflush(1);
     open my $fhparse, '>', 'cdda2wav.parse' or fatal $!;
+    $fhparse->autoflush(1);
     my $discid = '-';
     my @title;
     my ($num_tracks, $started);
     while (<$fh>) {
+        print STDERR "\e[31;1m  | $_\e[0m" if DEBUG;
         print $fhlog $_ if $fhlog;
         print $fhparse "disc prep\n" if !$started;
         $started = 1;
@@ -589,7 +605,7 @@ sub cdda2wav {
             $title[$1] = $2;
             $num_tracks = $1 if $1 > $num_tracks;
         }
-        elsif (/^percent_done:/) {
+        elsif (/^percent_done:|^recording /) {
             @title = ('[Untitled disc]') if !@title;
             print STDERR "\e[35;1m$discid \e[36;1m$title[0]\e[0m\n";
             print $fhparse "disc begin $discid $num_tracks $title[0]\n";
@@ -628,9 +644,21 @@ sub cdda2wav {
                 }
             }
         }
+        elsif (/\r100% +track\s+(\d+) '(.+)' recorded (.+)/) {
+            my ($n, $t, $r) = ($1, $2, $3);
+            $title[$n] ||= $t;
+            my ($result, $color) = (' ok ', 32);
+            if ($r !~ /successful/ && $r !~ /with minor/) {
+                ($result, $color) = ('warn', 33);
+            }
+            printf STDERR "\r  \e[${color};1m%-4.4s\e[0m %3d. %s \n", $result, $n, $t;
+            $result =~ s/^ +| +$//g;
+            print $fhparse "track $n done $result\n";
+        }
     }
-    waitpid($pid, 0);
-    fatal "auric rip failed: $!" if $?;
+    #waitpid($pid, 0);
+    close $fh
+        or print STDERR "cdda2wav may have failed ($?): $!";
     return $discid;
 }
 
