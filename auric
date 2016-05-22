@@ -240,11 +240,12 @@ sub cmd_play {
 
 sub cmd_find {
     my ($self) = @_;
-    my ($word, $field, $insensitive);
+    my ($word, $field);
+    my $insensitive = 1;
     GetOptions(
         'w|word-regexp' => \$word,
         'f|field=s' => \$field,
-        'i' => \$insensitive,
+        'I' => sub { $insensitive = 0 },
     ) or exit usage();
     exit usage() if !@ARGV;
     my $pfx = $insensitive ? '(?i)' : '';
@@ -435,7 +436,8 @@ sub cmd_mktags {
     chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
     my @discs = map { s{^($music_dir/)?disc-}{}o; $_ } @ARGV ? @ARGV : glob('disc-*');
     foreach my $id (@discs) {
-        chdir "$music_dir/disc-$id" or die "Can't chdir to disc-$id: $!";
+        chdir($id =~ m{/} ? $id : "$music_dir/disc-$id")
+            or die "Can't chdir to disc-$id: $!";
         print STDERR "disc $id\n\n" if $dry_run;
         my ($disc, $tracks) = read_metadata('metadata');
         my @dirs = grep { /^\d+$/ } glob('*');
