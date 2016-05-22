@@ -20,6 +20,8 @@ use constant DEBUG => 0;
 
 sub fatal;
 
+my $music_dir;
+
 if (!caller) {
     __PACKAGE__->run;
 }
@@ -51,8 +53,9 @@ sub defaults {
 sub init {
     my ($self) = @_;
     my $conf = $self->{'config'};
-    my $music_dir = $conf->{'music_dir'} ||= $ENV{'MUSIC'} || $ENV{'HOME'} . '/music';
-    my $dot_dir   = $conf->{'dot_dir'}   ||= $music_dir . '/.auric';
+    $music_dir  = $conf->{'music_dir'} ||= $ENV{'MUSIC'} || $ENV{'HOME'} . '/music';
+    chdir $music_dir or die "Can\'t chdir to $music_dir $!";
+    my $dot_dir = $conf->{'dot_dir'} ||= $music_dir . '/.auric';
     $self->read_config($dot_dir . '/conf');
 }
 
@@ -123,8 +126,6 @@ sub now {
 sub cmd_rip {
     my ($self) = @_;
     my $dev = $self->device;
-    my $music_dir = $self->config('music_dir');
-    chdir $music_dir or die "Can\'t chdir to $music_dir $!";
     open my $fhlog, '>>', 'rip.log' or die;
     printf $fhlog "%s Begin session\n", now();
     while (1) {
@@ -162,8 +163,6 @@ sub cmd_ingest {
         'f|force'   => \$opt{'force'},
         'e|encode'  => \$opt{'encode'},
     ) or exit usage();
-    my $music_dir = $self->config('music_dir');
-    chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
     foreach my $disc (@ARGV) {
         while (!-d $disc) {
             $disc =~ s{^$music_dir/(?=.+)}{} or fatal "No such disc $disc";
@@ -183,8 +182,6 @@ sub cmd_encode {
     GetOptions(
         'n|dry-run' => \$dry_run,
     ) or exit usage();
-    my $music_dir = $self->config('music_dir');
-    chdir $music_dir or die "Can\'t chdir to $music_dir $!";
     foreach my $obj (@ARGV) {
         my @masters = glob("$obj/*/master.wav");
         $self->_encode(basename($obj), @masters) if @masters;
@@ -229,8 +226,6 @@ sub _encode {
 
 sub cmd_play {
     my ($self) = @_;
-    my $music_dir = $self->config('music_dir');
-    chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
     my @files;
     my %opt = (
         'wanted' => sub {
@@ -259,8 +254,6 @@ sub cmd_find {
     exit usage() if !@ARGV;
     my $pfx = $insensitive ? '(?i)' : '';
     my @patterns = map { qr/$pfx$_/ } @ARGV;
-    my $music_dir = $self->config('music_dir');
-    chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
     my @indexes;
     if ($field) {
         @indexes = map { basename($_) } grep { -e } "index/$field";
@@ -283,8 +276,6 @@ sub cmd_find {
 
 sub cmd_ll {
     my ($self) = @_;
-    my $music_dir = $self->config('music_dir');
-    chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
     my %f2p = qw(
         d 1
         i 2
@@ -320,14 +311,11 @@ sub read_file {
 
 sub dirs {
     my ($self) = @_;
-    my $music_dir = $self->config('music_dir');
     return grep { -d } glob("$music_dir/*");
 }
 
 sub cmd_reindex {
     my ($self) = @_;
-    my $music_dir = $self->config('music_dir');
-    chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
     my @indexes = grep { -f } glob('index/*');
     my %fh = map {
         open my $fh, '>', $_ or fatal;
@@ -359,7 +347,6 @@ sub cmd_reindex {
 sub forobj {
     my $self = shift;
     my $code = pop;
-    my $music_dir = $self->config('music_dir');
     chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
     my @ids = map { s{^($music_dir/)}{}o; $_ } @_ ? @_ : glob('disc-*');
     foreach my $id (@ids) {
@@ -441,8 +428,6 @@ sub cmd_mktags {
         'n|dry-run' => \$dry_run,
         'f|force'   => \$force,
     ) or exit usage();
-    my $music_dir = $self->config('music_dir');
-    chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
     my @discs = map { s{^($music_dir/)?disc-}{}o; $_ } @ARGV ? @ARGV : glob('disc-*');
     foreach my $id (@discs) {
         chdir($id =~ m{/} ? $id : "$music_dir/disc-$id")
