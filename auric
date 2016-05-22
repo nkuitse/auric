@@ -162,7 +162,13 @@ sub cmd_ingest {
         'n|dry-run' => \$opt{'dry_run'},
         'f|force'   => \$opt{'force'},
         'e|encode'  => \$opt{'encode'},
+        'a|all'     => \$opt{'all'},
+        'v|verbose' => \$opt{'verbose'},
     ) or exit usage();
+    if ($opt{'all'}) {
+        exit usage() if @ARGV;
+        @ARGV = map { basename($_) } glob('disc-*');
+    }
     foreach my $disc (@ARGV) {
         while (!-d $disc) {
             $disc =~ s{^$music_dir/(?=.+)}{} or fatal "No such disc $disc";
@@ -170,7 +176,7 @@ sub cmd_ingest {
         if (my $res = $self->_ingest_disc($disc, %opt)) {
             print STDERR "[ok  ] $disc\n";
         }
-        else {
+        elsif ($opt{'verbose'}) {
             print STDERR "[skip] $disc\n";
         }
     }
