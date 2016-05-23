@@ -131,28 +131,34 @@ sub cmd_rip {
     while (1) {
         my $id = $self->wait_for_disc;
         last if !defined $id;
-        my $job = $self->rand_hash;
-        print STDERR "\e[35;1mJob $job\e[0m\n" if DEBUG;
         my $disc_dir = "disc-$id";
         if (-e "$disc_dir/audio.cddb" || (-d $disc_dir && !rmdir $disc_dir)) {
             print STDERR "Disc $id appears to have been ripped already\n";
             $self->eject_disc;
             next;
         }
-        foreach ('job', $job) {
-            -d $_ or mkdir $_ or fatal $!;
-            chdir $_ or fatal $!;
-        }
-        my $t0 = time;
-        my $id_again = $self->cdda2wav($fhlog);
-        my $tn = time;
-        $self->eject_disc;
-        chdir $music_dir or fatal $!;
-        rename "job/$job", "disc-$id" or fatal "Can't move disc-$id: $!";
-        printf $fhlog "  ok Disc %s : %2dm %2ds\n", $id, int(($tn - $t0) / 60), (($tn - $t0) % 60);
+        $self->_rip_disc($id, $fhlog);
     }
     printf $fhlog "%s End of session\n", now();
     close $fhlog;
+}
+
+sub _rip_disc {
+    my ($self, $id, $fhlog) = @_;
+    my $job = $self->rand_hash;
+    print STDERR "\e[35;1mJob $job\e[0m\n" if DEBUG;
+    foreach ('job', $job) {
+        -d $_ or mkdir $_ or fatal $!;
+        chdir $_ or fatal $!;
+    }
+    my $t0 = time;
+    my $id_again = $self->cdda2wav($fhlog);
+    my $tn = time;
+    $self->eject_disc;
+    rename "$music_dir/job/$job", "$music_dir/disc-$id" or fatal "Can't move disc-$id: $!";
+    printf $fhlog "  ok Disc %s : %2dm %2ds\n", $id, int(($tn - $t0) / 60), (($tn - $t0) % 60);
+    call_hook('hook.ripped', "$music_dir/disc-$id");
+    chdir $music_dir or fatal $!;
 }
 
 sub cmd_ingest {
@@ -451,6 +457,13 @@ sub cmd_mktags {
             #print STDERR "[\e[32;1mok  \e[0m] $t\n";
             print STDERR "\n" if $dry_run;
         }
+    }
+}
+
+sub call_hook {
+    my $name = shift;
+    if (-x "$music_dir/.auric/bin/$name" && -f _) {
+        system("$music_dir/.auric/bin/$name", @_);
     }
 }
 
