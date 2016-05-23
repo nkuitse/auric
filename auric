@@ -13,6 +13,7 @@ use CDDB_get qw(get_cddb);
 use Cwd;
 use File::Find qw(find);
 use POSIX qw(strftime);
+use Term::ReadKey;
 use Getopt::Long
     qw(:config posix_default gnu_compat require_order bundling no_ignore_case);
 
@@ -92,17 +93,19 @@ sub config {
 }
 
 sub wait_for_disc {
-    print STDERR "\e[1mWaiting for a disc...";
+    print STDERR "\e[1m** Insert the next disc or press Q to stop **\e[0m ";
     while (1) {
         local $_ = `cd-discid 2> /dev/null`;
         if (defined $_ && length $_) {
             chomp;
             my ($id, $count, @etc) = split / /;
-            print STDERR "\e[0m\n";
+            print STDERR "\n";
             return $id;
         }
-        print STDERR '.';
-        sleep 3;
+        ReadMode 4;
+        my $key = ReadKey(1);
+        ReadMode 0;
+        return if defined $key && $key =~ /[Qq\x03]/;
     }
 }
 
