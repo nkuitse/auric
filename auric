@@ -22,6 +22,7 @@ use constant DEBUG => 0;
 sub fatal;
 
 my $music_dir;
+my $clear_to_eol = `tput el`;
 
 if (!caller) {
     __PACKAGE__->run;
@@ -99,13 +100,14 @@ sub wait_for_disc {
         if (defined $_ && length $_) {
             chomp;
             my ($id, $count, @etc) = split / /;
-            print STDERR "\n";
+            print STDERR "\r", $clear_to_eol;
             return $id;
         }
         ReadMode 4;
         my $key = ReadKey(1);
         ReadMode 0;
         next if !defined $key || $key !~ /[Qq\x03]/;
+        chomp $key;
         print STDERR $key, "\n";
         return;
     }
@@ -138,7 +140,7 @@ sub cmd_rip {
         last if !defined $id;
         my $disc_dir = "disc-$id";
         if (-e "$disc_dir/audio.cddb" || (-d $disc_dir && !rmdir $disc_dir)) {
-            print STDERR "Disc $id appears to have been ripped already\n";
+            print STDERR "\e[32;1mDisc $id appears to have been ripped already\e[0m\n";
             $self->eject_disc;
             next;
         }
