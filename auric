@@ -105,7 +105,9 @@ sub wait_for_disc {
         ReadMode 4;
         my $key = ReadKey(1);
         ReadMode 0;
-        print(STDERR "\n"), return if defined $key && $key =~ /[Qq\x03]/;
+        next if !defined $key || $key !~ /[Qq\x03]/;
+        print STDERR $key, "\n";
+        return;
     }
 }
 
