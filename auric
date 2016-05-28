@@ -209,7 +209,7 @@ sub cmd_encode {
 
 sub _start_lame {
     my ($self, $wav, $mp3) = @_;
-    open my $fh, '-|', qw(stderr /dev/stdout lame --nohist --preset fast), $wav, $mp3
+    open my $fh, '-|', qw(stderr /dev/stdout lame --nohist --preset standard), $wav, $mp3
         or fatal $!;
     return $fh;
 }
