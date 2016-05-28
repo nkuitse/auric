@@ -209,7 +209,7 @@ sub cmd_encode {
 
 sub _start_lame {
     my ($self, $wav, $mp3) = @_;
-    open my $fh, '-|', qw(stderr /dev/stdout lame --nohist --preset fast standard), $wav, $mp3
+    open my $fh, '-|', qw(stderr /dev/stdout lame --nohist --preset fast), $wav, $mp3
         or fatal $!;
     return $fh;
 }
@@ -585,6 +585,7 @@ sub cdda2wav {
             '-cddb',
             1,
             '-B',
+            '-no-hidden-track',
             'out-fd=1'
     );
     print STDERR "\e[36;1m@cmd\e[0m\n" if DEBUG;
