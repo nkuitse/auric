@@ -295,6 +295,10 @@ sub cmd_find {
 
 sub cmd_ll {
     my ($self) = @_;
+    my %opt;
+    GetOptions(
+        'v|verbose' => \$opt{'verbose'},
+    ) or exit usage();
     my %f2p = qw(
         d 1
         i 2
@@ -306,16 +310,21 @@ sub cmd_ll {
     @ARGV = $self->dirs if !@ARGV;
     my $twidth = ($ENV{'COLUMNS'} || 80) - 42;
     foreach my $disc (@ARGV) {
-        my $flagstr = '+------';
-        my ($flags) = map { basename($_) } glob("$disc/+*");
-        $flags = '+' if !defined $flags;
-        foreach (split //, $flags) {
-            substr($flagstr, $f2p{$_} ||= scalar(keys %f2p), 1) = $_;
-        }
-        my @tracks = grep { -d } glob("$disc/0???");
-        my $title = -e "$disc/\@title" ? read_file("$disc/\@title") : '(no title)';
+        my ($meta, $tracks) = read_metadata("$disc/metadata");
+        my $title = -e "$disc/\@title" ? read_file("$disc/\@title") : $meta->{title} || $meta->{album} || '(no title)';
         chomp $title;
-        printf "%-7.7s %4d %-24.24s %-${twidth}s\n", $flagstr, scalar(@tracks), basename($disc), $title;
+        if ($opt{'verbose'}) {
+            my $flagstr = '+------';
+            my ($flags) = map { basename($_) } glob("$disc/+*");
+            $flags = '+' if !defined $flags;
+            foreach (split //, $flags) {
+                substr($flagstr, $f2p{$_} ||= scalar(keys %f2p), 1) = $_;
+            }
+            printf "%-7.7s %4d %-24.24s %-${twidth}s\n", $flagstr, scalar(keys %$tracks), basename($disc), $title;
+        }
+        else {
+            printf "%4d %s\n", scalar(keys %$tracks), $title;
+        }
     }
 }
 
@@ -330,7 +339,7 @@ sub read_file {
 
 sub dirs {
     my ($self) = @_;
-    return grep { -d } glob("$music_dir/*");
+    return grep { -d } glob("$music_dir/*"), glob("$music_dir/discs/*");
 }
 
 sub cmd_reindex {
