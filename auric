@@ -138,7 +138,7 @@ sub cmd_rip {
     while (1) {
         my $id = $self->wait_for_disc;
         last if !defined $id;
-        my $disc_dir = "disc-$id";
+        my $disc_dir = "discs/$id";
         if (-e "$disc_dir/audio.cddb" || (-d $disc_dir && !rmdir $disc_dir)) {
             print STDERR "\e[32;1mDisc $id appears to have been ripped already\e[0m\n";
             $self->eject_disc;
@@ -162,9 +162,9 @@ sub _rip_disc {
     my $id_again = $self->cdda2wav($fhlog);
     my $tn = time;
     $self->eject_disc;
-    rename "$music_dir/job/$job", "$music_dir/disc-$id" or fatal "Can't move disc-$id: $!";
+    rename "$music_dir/job/$job", "$music_dir/discs/$id" or fatal "Can't move $id: $!";
     printf $fhlog "  ok Disc %s : %2dm %2ds\n", $id, int(($tn - $t0) / 60), (($tn - $t0) % 60);
-    call_hook('hook.ripped', "$music_dir/disc-$id");
+    call_hook('hook.ripped', "$music_dir/discs/$id");
     chdir $music_dir or fatal $!;
 }
 
@@ -180,7 +180,7 @@ sub cmd_ingest {
     ) or exit usage();
     if ($opt{'all'}) {
         exit usage() if @ARGV;
-        @ARGV = map { basename($_) } glob('disc-*');
+        @ARGV = map { basename($_) } glob('discs/*');
     }
     foreach my $disc (@ARGV) {
         while (!-d $disc) {
@@ -340,7 +340,7 @@ sub cmd_reindex {
         open my $fh, '>', $_ or fatal;
         basename($_) => $fh;
     } @indexes;
-    my @discs = glob('disc-*');
+    my @discs = glob('discs/*');
     foreach my $disc (@discs) {
         open my $fh, '<', "$disc/metadata" or next;
         printf STDERR "[%-4.4s] %s", '', $disc;
@@ -367,9 +367,9 @@ sub forobj {
     my $self = shift;
     my $code = pop;
     chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
-    my @ids = map { s{^($music_dir/)}{}o; $_ } @_ ? @_ : glob('disc-*');
+    my @ids = map { s{^($music_dir/)}{}o; $_ } @_ ? @_ : glob('discs/*');
     foreach my $id (@ids) {
-        chdir "$music_dir/$id" or die "Can't chdir to $id: $!";
+        chdir "$music_dir/discs/$id" or die "Can't chdir to discs/$id: $!";
         $code->($id);
     }
 }
@@ -447,10 +447,10 @@ sub cmd_mktags {
         'n|dry-run' => \$dry_run,
         'f|force'   => \$force,
     ) or exit usage();
-    my @discs = map { s{^($music_dir/)?disc-}{}o; $_ } @ARGV ? @ARGV : glob('disc-*');
+    my @discs = map { s{^($music_dir/)?discs/}{}o; $_ } @ARGV ? @ARGV : glob('discs/*');
     foreach my $id (@discs) {
-        chdir($id =~ m{/} ? $id : "$music_dir/disc-$id")
-            or die "Can't chdir to disc-$id: $!";
+        chdir($id =~ m{/} ? $id : "$music_dir/discs/$id")
+            or die "Can't chdir to discs/$id: $!";
         print STDERR "disc $id\n\n" if $dry_run;
         my ($disc, $tracks) = read_metadata('metadata');
         my @dirs = grep { /^\d+$/ } glob('*');
