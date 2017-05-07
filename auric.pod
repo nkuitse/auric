@@ -49,32 +49,33 @@ probably don't mesh with mine, but who knows? -- maybe they do.
 (This section usually appears at the end of a man page, but in the case of
 B<auric> it's better to know about this stuff sooner.)
 
-B<auric> keeps files in a set of directories under I<$MUSIC>, one for each disc
+B<auric> keeps files in a set of directories under I<$MUSIC>B</discs>, one for each disc
 (using the CDDB identifier for the disc) and, within that, one for each track
 (using the track number).  Disc and track information (I<metadata>) is kept in
 a single file for each disc but copied into ID3 tags if desired.
 
 For example, here's a part of my music collection:
 
-    disc-0910aa02
+    discs/0910aa02
     |-- 0001
+    |   |-- info.orig
     |   |-- listen.mp3
-    |   |-- master.wav
     |   `-- tags
     |-- 0002
+    |   |-- info.orig
     |   |-- listen.mp3
-    |   |-- master.wav
     |   `-- tags
+    |-- audio.cddb
+    |-- audio.cdindex
     |-- cdda2wav
     |   |-- audio.cddb
     |   |-- audio.cdindex
     |   |-- audio_01.inf
-    |   |-- audio_01.wav -> ../0001/master.wav
-    |   |-- audio_02.inf
-    |   `-- audio_02.wav -> ../0002/master.wav
+    |   `-- audio_02.inf
     |-- cdda2wav.log
     |-- metadata
-    `-- nodisc
+    |-- nodisc
+    `-- playlist.m3u
 
 You can put anything else you want in here.  For example, B<auric> doesn't care
 about the file C<nodisc>; it just indicates that I don't have the disc itself.
@@ -82,7 +83,8 @@ about the file C<nodisc>; it just indicates that I don't have the disc itself.
 
 The original files that B<cdda2wav> produced are stashed away, untouched, in a
 subdirectory in case they're needed later.  (There's even a command to restore
-them to the way they were.)  Or you can delete the masters, keep the discs, and
+them to the way they were.)  Or you can delete the masters -- as in this
+example -- keep the discs, and
 re-rip them again later if you want to re-encode them.  (This is the way I do
 things for all but my most treasured albums; I have a big disc file that discs
 go in [in paper sleeves] after I rip them.)
@@ -91,14 +93,14 @@ Because it's all filesystem-based, it's easy to create a playlist or a
 collection; you just create a directory of symlinks like this one:
 
     b7
-    |-- 0001 -> ../disc-6f10c308/0005
-    |-- 0002 -> ../disc-6f10c308/0006
-    |-- 0003 -> ../disc-6f10c308/0007
-    `-- 0004 -> ../disc-6f10c308/0008
+    |-- 0001 -> ../discs/6f10c308/0005
+    |-- 0002 -> ../discs/6f10c308/0006
+    |-- 0003 -> ../discs/6f10c308/0007
+    `-- 0004 -> ../discs/6f10c308/0008
 
 Or you can use a command for that purpose, if I ever get around to writing it:
 
-    $ auric make b7 disc-6f10c308/{5..8}
+    $ auric make b7 discs/6f10c308/{5..8}
 
 (I will, because I'm lazy.)
 
@@ -109,7 +111,8 @@ Or you can use a command for that purpose, if I ever get around to writing it:
 =item B<$MUSIC>
 
 The root of your music library.  Defaults to C<$HOME/music>.  Each disc's
-directory is placed in here, and a C<tmp> directory will be created in here to
+directory is placed in I<$MUSIC>B</discs>, and a C<tmp> directory will be
+created in here to
 hold files as discs are being ripped.
 
 =back
