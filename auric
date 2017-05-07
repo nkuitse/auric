@@ -310,9 +310,10 @@ sub cmd_ll {
     @ARGV = $self->dirs if !@ARGV;
     my $twidth = ($ENV{'COLUMNS'} || 80) - 42;
     foreach my $disc (@ARGV) {
+        next if !-e "$disc/metadata";
         my ($meta, $tracks) = read_metadata("$disc/metadata");
-        my $title = -e "$disc/\@title" ? read_file("$disc/\@title") : $meta->{title} || $meta->{album} || '(no title)';
-        chomp $title;
+        my $title = $meta->{title} || $meta->{album};
+        chomp $title if defined $title;
         if ($opt{'verbose'}) {
             my $flagstr = '+------';
             my ($flags) = map { basename($_) } glob("$disc/+*");
@@ -320,9 +321,11 @@ sub cmd_ll {
             foreach (split //, $flags) {
                 substr($flagstr, $f2p{$_} ||= scalar(keys %f2p), 1) = $_;
             }
+            $title ||= '(no title)';
             printf "%-7.7s %4d %-24.24s %-${twidth}s\n", $flagstr, scalar(keys %$tracks), basename($disc), $title;
         }
         else {
+            $title ||= basename($disc) . ' (no title)';
             printf "%4d %s\n", scalar(keys %$tracks), $title;
         }
     }
