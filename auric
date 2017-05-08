@@ -18,9 +18,12 @@ use Getopt::Long
     qw(:config posix_default gnu_compat require_order bundling no_ignore_case);
 
 use constant DEBUG => 0;
+use constant VERSION => '0.06';
 
+sub usage;
 sub fatal;
 
+(my $prog = $0) =~ s{.+/}{};
 my $music_dir;
 my $clear_to_eol = `tput el`;
 
@@ -40,7 +43,7 @@ sub run {
         'config' => { $cls->defaults, %opt },
     }, $cls;
     $self->init;
-    my $code = $self->can('cmd_' . $cmd) or exit usage();
+    my $code = $self->can('cmd_' . $cmd) or usage;
     $code->($self);
 }
 
@@ -155,17 +158,16 @@ sub _rip_disc {
     my $job = $self->rand_hash;
     print STDERR "\e[35;1mJob $job\e[0m\n" if DEBUG;
     foreach ('job', $job) {
-        -d $_ or mkdir $_ or fatal $!;
-        chdir $_ or fatal $!;
+        xmkdir($_) && chdir $_ or fatal "chdir $_: $!";
     }
     my $t0 = time;
     my $id_again = $self->cdda2wav($fhlog);
     my $tn = time;
     $self->eject_disc;
-    rename "$music_dir/job/$job", "$music_dir/discs/$id" or fatal "Can't move $id: $!";
+    xrename("$music_dir/job/$job", "$music_dir/discs/$id");
     printf $fhlog "  ok Disc %s : %2dm %2ds\n", $id, int(($tn - $t0) / 60), (($tn - $t0) % 60);
     call_hook('hook.ripped', "$music_dir/discs/$id");
-    chdir $music_dir or fatal $!;
+    chdir $music_dir or fatal "chdir $music_dir: $!";
 }
 
 sub cmd_ingest {
@@ -177,14 +179,14 @@ sub cmd_ingest {
         'e|encode'  => \$opt{'encode'},
         'a|all'     => \$opt{'all'},
         'v|verbose' => \$opt{'verbose'},
-    ) or exit usage();
+    ) or usage;
     if ($opt{'all'}) {
-        exit usage() if @ARGV;
+        usage if @ARGV;
         @ARGV = map { basename($_) } glob('discs/*');
     }
     foreach my $disc (@ARGV) {
         while (!-d $disc) {
-            $disc =~ s{^$music_dir/(?=.+)}{} or fatal "No such disc $disc";
+            $disc =~ s{^$music_dir/(?=.+)}{} or fatal "no such disc $disc";
         }
         if (my $res = $self->_ingest_disc($disc, %opt)) {
             print STDERR "[ok  ] $disc\n";
@@ -200,7 +202,7 @@ sub cmd_encode {
     my $dry_run;
     GetOptions(
         'n|dry-run' => \$dry_run,
-    ) or exit usage();
+    ) or usage;
     foreach my $obj (@ARGV) {
         my @masters = glob("$obj/*/master.wav");
         $self->_encode(basename($obj), @masters) if @masters;
@@ -210,7 +212,7 @@ sub cmd_encode {
 sub _start_lame {
     my ($self, $wav, $mp3) = @_;
     open my $fh, '-|', qw(stderr /dev/stdout lame --nohist --preset standard), $wav, $mp3
-        or fatal $!;
+        or fatal "start lame: $!";
     return $fh;
 }
 
@@ -269,21 +271,21 @@ sub cmd_find {
         'w|word-regexp' => \$word,
         'f|field=s' => \$field,
         'I' => sub { $insensitive = 0 },
-    ) or exit usage();
-    exit usage() if !@ARGV;
+    ) or usage;
+    usage if !@ARGV;
     my $pfx = $insensitive ? '(?i)' : '';
     my @patterns = map { qr/$pfx$_/ } @ARGV;
     my @indexes;
     if ($field) {
         @indexes = map { basename($_) } grep { -e } "index/$field";
-        exit usage() if !@indexes;
+        usage if !@indexes;
     }
     else {
         @indexes = map { basename($_) } grep { -f } glob('index/*');
-        exit usage() if !@indexes;
+        usage if !@indexes;
     }
     foreach my $index (@indexes) {
-        open my $fh, '<', "index/$index" or fatal $!;
+        open my $fh, '<', "index/$index" or fatal "open index/$index for reading: $!";
         while (<$fh>) {
             next if !/^(\S+) (.+)/;
             my ($obj, $val) = ($1, $2);
@@ -298,7 +300,7 @@ sub cmd_ll {
     my %opt;
     GetOptions(
         'v|verbose' => \$opt{'verbose'},
-    ) or exit usage();
+    ) or usage;
     my %f2p = qw(
         d 1
         i 2
@@ -333,7 +335,7 @@ sub cmd_ll {
 
 sub read_file {
     my ($f) = @_;
-    open my $fh, '<', $f or fatal "Can't open $f for reading: $!";
+    open my $fh, '<', $f or fatal "open $f for reading: $!";
     local $/;
     my $str = <$fh>;
     close $fh;
@@ -349,7 +351,7 @@ sub cmd_reindex {
     my ($self) = @_;
     my @indexes = grep { -f } glob('index/*');
     my %fh = map {
-        open my $fh, '>', $_ or fatal;
+        open my $fh, '>', $_ or fatal "open $_ for writing: $!";
         basename($_) => $fh;
     } @indexes;
     my @discs = glob('discs/*');
@@ -378,7 +380,7 @@ sub cmd_reindex {
 sub forobj {
     my $self = shift;
     my $code = pop;
-    chdir $music_dir or fatal "Can\'t chdir to $music_dir $!";
+    chdir $music_dir or fatal "chdir $music_dir: $!";
     my @ids = map { s{^($music_dir/)}{}o; $_ } @_ ? @_ : glob('discs/*');
     foreach my $id (@ids) {
         chdir "$music_dir/discs/$id" or die "Can't chdir to discs/$id: $!";
@@ -392,7 +394,7 @@ sub cmd_tag {
     GetOptions(
         'n|dry-run' => sub { $dry_run = $verbose = 1 },
         'v|verbose' => \$verbose,
-    ) or exit usage();
+    ) or usage;
     $self->forobj(@ARGV, sub {
         my ($id) = @_;
         print STDERR "disc $id\n\n" if $verbose;
@@ -421,7 +423,7 @@ sub cmd_mkpls {
     GetOptions(
         'f|force' => \$force,
         'n|dry-run' => \$dry_run,
-    ) or exit usage();
+    ) or usage;
     $self->forobj(@ARGV, sub {
         my ($id) = @_;
         print STDERR "disc $id\n\n" if $dry_run;
@@ -458,7 +460,7 @@ sub cmd_mktags {
     GetOptions(
         'n|dry-run' => \$dry_run,
         'f|force'   => \$force,
-    ) or exit usage();
+    ) or usage;
     my @discs = map { s{^($music_dir/)?discs/}{}o; $_ } @ARGV ? @ARGV : glob('discs/*');
     foreach my $id (@discs) {
         chdir($id =~ m{/} ? $id : "$music_dir/discs/$id")
@@ -489,7 +491,7 @@ sub call_hook {
 sub have_disc {
     my ($self) = @_;
     my @command = ( qw(udevadm info --query property), '--name' => $self->device );
-    open my $fh, '-|', @command or fatal "Can't run udevadm: $!";
+    open my $fh, '-|', @command or fatal "start udevadm: $!";
     while (<$fh>) {
         return 1 if /^ID_CDROM_MEDIA_CD=1/;
     }
@@ -515,7 +517,7 @@ sub _ingest_disc {
     # $disc/audio_*.inf --> $dist/cddawav/*.inf
     return if !@inf_files;
     return if !$opt{'force'} && -e $metadata;
-    $opt{'dry_run'} or makedir($dest);
+    $opt{'dry_run'} or xmkdir($dest);
     my %disc = ( 'id' => '.' );
     my (@tracks, %tags, @masters, @listens, $fh);
     foreach my $inf (@inf_files) {
@@ -536,30 +538,30 @@ sub _ingest_disc {
             'artist' => $artist,
         };
         next if $opt{'dry_run'};
-        makedir($tdir);
-        rename $inf, "$disc/cdda2wav/".basename($inf) or fatal "Can't move $inf: $!";
+        xmkdir($tdir);
+        xrename($inf, "$disc/cdda2wav/".basename($inf));
         my $wav = "$disc/audio_$t.wav";
         if (-e $wav) {
             my $master = "$tdir/master.wav";
-            rename $wav, $master or fatal "Can't move $wav: $!";
+            xrename($wav, $master);
             push @masters, $master;
             my $link = "$disc/cdda2wav/".basename($wav);
-            -e $link or symlink "../$tnum/master.wav", $link or fatal "Can't create symlink $disc/$tnum/master.wav: $!";
+            -e $link or symlink "../$tnum/master.wav", $link or fatal "create symlink $link to $disc/$tnum/master.wav: $!";
         }
         my $mp3 = "$disc/audio_$t.mp3";
         my $listen = "$tdir/listen.mp3";
         if (-e $mp3 && !-e $listen) {
-            rename $mp3, $listen or fatal "Can't move $mp3 $!";
+            xrename($mp3, $listen);
             push @listens, $listen;
             my $link = "$disc/cdda2wav/".basename($mp3);
-            -e $link or symlink "../$tnum/listen.mp3", $link or fatal "Can't create symlink $disc/$tnum/listen.mp3: $!";
+            -e $link or symlink "../$tnum/listen.mp3", $link or fatal "Can't create symlink $link to $disc/$tnum/listen.mp3: $!";
         }
     }
     if (!$opt{'dry_run'}) {
         open $fh, '>', $metadata or fatal;
         select $fh;
         foreach (grep { -e "$disc/$_" } qw(audio.cddb audio.cdindex)) {
-            rename "$disc/$_", "$dest/$_" or fatal "Can't move $_ to $dest: $!";
+            xrename("$disc/$_", "$dest/$_");
         }
         if ($opt{'encode'} && @masters) {
             my @mp3s = $self->_encode(basename($disc), @masters);
@@ -752,13 +754,23 @@ sub basename {
     return $file;
 }
 
-sub makedir {
+sub xmkdir {
     my ($dir) = @_;
-    -d $dir or mkdir $dir or fatal "Can't mkdir $dir $!";
+    -d $dir or mkdir $dir or fatal "mkdir $dir $!";
+}
+
+sub xrename {
+    my ($s, $d) = @_;
+    rename $s, $d or fatal "rename $s to $d: $!";
+}
+
+sub usage {
+    print STDERR "usage: $prog COMMAND [ARG...]\n";
+    exit 1;
 }
 
 sub fatal {
-    print STDERR $_, "\n" for @_;
+    print STDERR "$prog: @_\n";
     exit 2;
 }
 
