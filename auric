@@ -37,7 +37,7 @@ sub run {
     GetOptions(
         'm|music=s' => \$opt{'music_dir'},
         'd|dir=s' => \$opt{'dot_dir'},
-    ) or die;
+    ) or usage;
     my $cmd = @ARGV ? shift @ARGV : 'help';
     my $self = bless {
         'config' => { $cls->defaults, %opt },
@@ -59,7 +59,7 @@ sub init {
     my ($self) = @_;
     my $conf = $self->{'config'};
     $music_dir  = $conf->{'music_dir'} ||= $ENV{'MUSIC'} || $ENV{'HOME'} . '/music';
-    chdir $music_dir or die "Can\'t chdir to $music_dir $!";
+    xchdir($music_dir);
     my $dot_dir = $conf->{'dot_dir'} ||= $music_dir . '/.auric';
     $self->read_config($dot_dir . '/conf');
 }
@@ -68,7 +68,7 @@ sub read_config {
     my ($self, $dir) = @_;
     my $conf = $self->{'config'};
     my $f = "$dir/auric.conf";
-    open my $fh, '<', $f or die "Can't open config file $f: $!";
+    my $fh = xopen('<', $f);
     while (<$fh>) {
         next if /^\s*(#.*)?$/;  # Skip blank lines and comments
         chomp;
@@ -136,7 +136,7 @@ sub now {
 sub cmd_rip {
     my ($self) = @_;
     my $dev = $self->device;
-    open my $fhlog, '>>', 'rip.log' or die;
+    my $fhlog = xopen('>>', 'rip.log');
     printf $fhlog "%s Begin session\n", now();
     while (1) {
         my $id = $self->wait_for_disc;
@@ -158,7 +158,8 @@ sub _rip_disc {
     my $job = $self->rand_hash;
     print STDERR "\e[35;1mJob $job\e[0m\n" if DEBUG;
     foreach ('job', $job) {
-        xmkdir($_) && chdir $_ or fatal "chdir $_: $!";
+        xmkdir($_);
+        xchdir($_);
     }
     my $t0 = time;
     my $id_again = $self->cdda2wav($fhlog);
@@ -167,7 +168,7 @@ sub _rip_disc {
     xrename("$music_dir/job/$job", "$music_dir/discs/$id");
     printf $fhlog "  ok Disc %s : %2dm %2ds\n", $id, int(($tn - $t0) / 60), (($tn - $t0) % 60);
     call_hook('hook.ripped', "$music_dir/discs/$id");
-    chdir $music_dir or fatal "chdir $music_dir: $!";
+    xchdir($music_dir);
 }
 
 sub cmd_ingest {
@@ -285,7 +286,7 @@ sub cmd_find {
         usage if !@indexes;
     }
     foreach my $index (@indexes) {
-        open my $fh, '<', "index/$index" or fatal "open index/$index for reading: $!";
+        my $fh = xopen('<', "index/$index");
         while (<$fh>) {
             next if !/^(\S+) (.+)/;
             my ($obj, $val) = ($1, $2);
@@ -335,7 +336,7 @@ sub cmd_ll {
 
 sub read_file {
     my ($f) = @_;
-    open my $fh, '<', $f or fatal "open $f for reading: $!";
+    my $fh = xopen('<', $f);
     local $/;
     my $str = <$fh>;
     close $fh;
@@ -351,12 +352,12 @@ sub cmd_reindex {
     my ($self) = @_;
     my @indexes = grep { -f } glob('index/*');
     my %fh = map {
-        open my $fh, '>', $_ or fatal "open $_ for writing: $!";
+        my $fh = xopen('>', $_);
         basename($_) => $fh;
     } @indexes;
     my @discs = glob('discs/*');
     foreach my $disc (@discs) {
-        open my $fh, '<', "$disc/metadata" or next;
+        my $fh = xopen('<', "$disc/metadata");
         printf STDERR "[%-4.4s] %s", '', $disc;
         while (<$fh>) {
             next if /^\s*(#.*)?$/;
@@ -380,10 +381,10 @@ sub cmd_reindex {
 sub forobj {
     my $self = shift;
     my $code = pop;
-    chdir $music_dir or fatal "chdir $music_dir: $!";
+    xchdir($music_dir);
     my @ids = map { s{^($music_dir/)}{}o; $_ } @_ ? @_ : glob('discs/*');
     foreach my $id (@ids) {
-        chdir "$music_dir/discs/$id" or die "Can't chdir to discs/$id: $!";
+        xchdir("$music_dir/discs/$id");
         $code->($id);
     }
 }
@@ -432,7 +433,7 @@ sub cmd_mkpls {
         my @files = glob('*/listen.mp3');
         return if !@files;
         my @tracks = map { basename(dirname($_)) } @files;
-        open my $fh, '>', 'playlist.pls' or die;
+        my $fh = xopen('>', 'playlist.pls');
         print $fh "[playlist]\n\n";
         my $n = 0;
         foreach my $t (@tracks) {
@@ -463,8 +464,7 @@ sub cmd_mktags {
     ) or usage;
     my @discs = map { s{^($music_dir/)?discs/}{}o; $_ } @ARGV ? @ARGV : glob('discs/*');
     foreach my $id (@discs) {
-        chdir($id =~ m{/} ? $id : "$music_dir/discs/$id")
-            or die "Can't chdir to discs/$id: $!";
+        xchdir($id =~ m{/} ? $id : "$music_dir/discs/$id");
         print STDERR "disc $id\n\n" if $dry_run;
         my ($disc, $tracks) = read_metadata('metadata');
         my @dirs = grep { /^\d+$/ } glob('*');
@@ -558,7 +558,7 @@ sub _ingest_disc {
         }
     }
     if (!$opt{'dry_run'}) {
-        open $fh, '>', $metadata or fatal;
+        $fh = xopen('>', $metadata);
         select $fh;
         foreach (grep { -e "$disc/$_" } qw(audio.cddb audio.cdindex)) {
             xrename("$disc/$_", "$dest/$_");
@@ -604,9 +604,9 @@ sub cdda2wav {
     );
     print STDERR "\e[36;1m@cmd\e[0m\n" if DEBUG;
     my $pid = open my $fh, '-|', @cmd
-        or fatal "Can't cdda2wav: $!";
+        or fatal "start cdda2wav: $!";
     $fh->autoflush(1);
-    open my $fhparse, '>', 'cdda2wav.parse' or fatal $!;
+    my $fhparse = xopen('>', 'cdda2wav.parse');
     $fhparse->autoflush(1);
     my $discid = '-';
     my @title;
@@ -691,7 +691,7 @@ sub cdda2wav {
 sub read_tags {
     my ($f) = @_;
     my %tag;
-    open my $fh, '<', $f or die "Can't open file $f: $!";
+    my $fh = xopen('<', $f);
     while (<$fh>) {
         chomp;
         next if /^\s*(?:#.*)?$/;  # Skip blank lines and comments
@@ -705,7 +705,7 @@ sub read_tags {
 sub read_metadata {
     my ($f) = @_;
     my (%disc, %track);
-    open my $fh, '<', $f or die "Can't open file $f: $!";
+    my $fh = xopen('<', $f);
     while (<$fh>) {
         if (/^\. (\S+) (.*)/) {
             $disc{$1} = $2;
@@ -729,7 +729,7 @@ sub write_tags {
             $perm = (stat $f)[2] & 07777;
             chmod($perm | 0600, $f);
         }
-        open $fh, '>', $f or die "Can't open file $f for writing: $!";
+        $fh = xopen('>', $f);
         select $fh;
     }
     my %keys = map { $_ => 1 } (keys %$track, keys %$disc);
@@ -762,6 +762,22 @@ sub xmkdir {
 sub xrename {
     my ($s, $d) = @_;
     rename $s, $d or fatal "rename $s to $d: $!";
+}
+
+sub xchdir {
+    my ($d) = @_;
+    chdir $d or fatal "chdir $d: $!";
+}
+
+sub xopen {
+    my ($mode, $file) = @_;
+    my $fh;
+    return $fh if open $fh, $mode, $file;
+    fatal "open $file: $!" if $mode =~ /\+/;
+    fatal "open $file for reading: $!" if $mode =~ /</;
+    fatal "open $file for writing: $!" if $mode =~ />/;
+    fatal "start $file: $!" if $mode =~ /\|/;
+    fatal "open $file: $!";
 }
 
 sub usage {
