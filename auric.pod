@@ -148,7 +148,12 @@ entire music library and encode anything that hasn't been done yet.
 
 =item B<edit> [I<disc>...]
 
-Edit the metadata for one or more discs using B<vim(1)>.
+Edit the metadata for one or more discs using B<vim(1)>.  MP3 "listening files"
+will be updated if any changes are made.
+
+=item B<make> I<name> I<disc>/I<track>...
+
+Make a playlist I<name> comprised of the specified tracks.
 
 =item B<mktags> [I<disc>...]
 
@@ -172,7 +177,7 @@ Grep for disc and track metadata.  Case-insensitive and very rough.
 
 =item B<ls>
 
-List all discs (C<disc-*>) with their titles.
+List all discs (F<disc/*>) with their titles.
 
 =back
 
@@ -184,10 +189,8 @@ but at this point there are no guarantees.  This is wrong and it will be fixed.
 =head1 PREREQUISITES
 
 B<auric> requires B<cdda2wav(1)>, B<lame(1)>, B<perl(1)>, B<zsh(1)>, and the
-Perl modules B<MP3::Tag>, B<File::Glob>, and B<Getopt::Long>.  Oh, and
-B<darb(1)> which is a little shell script to start and stop Mac OS X's
-B<diskarbitrationd(8)> which gets in the way of ejecting discs; bug me if you
-need that too.
+Perl modules B<CDDB_get> and B<MP3::Tag>, as well as a handful of other,
+commonly used modules.
 
 =head1 BUGS
 
@@ -199,7 +202,7 @@ Paul Hoffman <nkuitse@nkuitse.com>
 
 =head1 COPYRIGHT
 
-Copyright 2013 Paul M. Hoffman.
+Copyright 2013-2016 Paul M. Hoffman.
 
 This module is free software; you can redistribute it and/or modify it under
 the same terms as Perl itself. See perldoc perlartistic.
