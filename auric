@@ -250,12 +250,14 @@ sub cmd_play {
     my ($self) = @_;
     my @files;
     my %opt = (
+        'follow' => 1,
+        'follow_skip' => 2,
         'wanted' => sub {
             push @files, $File::Find::name if /^listen\.\w+$/;
         },
         'follow' => 1,
     );
-    File::Find::find(\%opt, @ARGV);
+    find(\%opt, @ARGV);
     if (@files == 1 && $files[0] =~ /\.url$/) {
         exec(qw(mplayer), @files);
     }
@@ -296,41 +298,18 @@ sub cmd_find {
     }
 }
 
-sub cmd_ll {
+sub cmd_ls {
     my ($self) = @_;
-    my %opt;
-    GetOptions(
-        'v|verbose' => \$opt{'verbose'},
-    ) or usage;
-    my %f2p = qw(
-        d 1
-        i 2
-        l 3
-        m 4
-        r 5
-        t 6
-    );
     @ARGV = $self->dirs if !@ARGV;
     my $twidth = ($ENV{'COLUMNS'} || 80) - 42;
-    foreach my $disc (@ARGV) {
-        next if !-e "$disc/metadata";
-        my ($meta, $tracks) = read_metadata("$disc/metadata");
+    foreach my $obj (@ARGV) {
+        next if !-e "$obj/metadata";
+        my ($meta, $tracks) = read_metadata("$obj/metadata");
         my $title = $meta->{title} || $meta->{album};
         chomp $title if defined $title;
-        if ($opt{'verbose'}) {
-            my $flagstr = '+------';
-            my ($flags) = map { basename($_) } glob("$disc/+*");
-            $flags = '+' if !defined $flags;
-            foreach (split //, $flags) {
-                substr($flagstr, $f2p{$_} ||= scalar(keys %f2p), 1) = $_;
-            }
-            $title ||= '(no title)';
-            printf "%-7.7s %4d %-24.24s %-${twidth}s\n", $flagstr, scalar(keys %$tracks), basename($disc), $title;
-        }
-        else {
-            $title ||= basename($disc) . ' (no title)';
-            printf "%4d %s\n", scalar(keys %$tracks), $title;
-        }
+        $title ||= '(no title)';
+        $obj =~ s{^\Q$music_dir\E/}{}o;
+        printf "%4d %-24.24s %-${twidth}s\n", scalar(keys %$tracks), $obj, $title;
     }
 }
 
@@ -345,7 +324,12 @@ sub read_file {
 
 sub dirs {
     my ($self) = @_;
-    return grep { -d } glob("$music_dir/*"), glob("$music_dir/discs/*");
+    my %dir = map {
+        -d $_ ? ($_ => 1)
+              : ()
+    } glob("$music_dir/*"), glob("$music_dir/discs/*");
+    delete $dir{"$music_dir/discs"};
+    return sort keys %dir;
 }
 
 sub cmd_reindex {
@@ -401,19 +385,19 @@ sub cmd_tag {
         print STDERR "disc $id\n\n" if $verbose;
         my %seen;
         find({
+            'follow' => 1,
+            'follow_skip' => 2,
             'wanted' => sub {
                 print STDERR $_, "\n" if $verbose;
-                return if $seen{$File::Find::dir};
+                return if $seen{$File::Find::dir}++;
                 if ($_ eq 'listen.mp3' && -e 'tags') {
                     print STDERR basename($File::Find::dir), "\n";
                     return if $dry_run;
                     my $mp3 = MP3::Tag->new($_);
                     my $h = read_tags('tags');
                     $mp3->update_tags($h);
-                    $seen{$File::Find::dir}++;
                 }
             },
-            'follow' => 1,
         }, '.');
     });
 }
@@ -479,6 +463,63 @@ sub cmd_mktags {
             print STDERR "\n" if $dry_run;
         }
     }
+}
+
+sub cmd_edit {
+    my ($self) = @_;
+    my @discs = map { s{^($music_dir/)?discs/}{}o; $_ } @ARGV ? @ARGV : glob('discs/*');
+    foreach my $id (@discs) {
+        xchdir($id =~ m{/} ? $id : "$music_dir/discs/$id");
+        my $mtime = mtime('metadata');
+        my $editor = $ENV{'VISUAL'} || $ENV{'EDITOR'} || 'vi';
+        system($editor, 'metadata') == 0 or fatal 'editor exited with error status';
+        if ($mtime == mtime('metadata')) {
+            print STDERR "unchanged: $id\n";
+            next;
+        }
+        my ($disc, $tracks) = read_metadata('metadata');
+        foreach my $t (sort keys %$tracks) {
+            write_tags("$t/tags", $tracks->{$t}, $disc);
+            if (-e "$t/listen.mp3") {
+                my $mp3 = MP3::Tag->new("$t/listen.mp3");
+                my $h = read_tags("$t/tags");
+                $mp3->update_tags($h);
+            }
+        }
+    }
+}
+
+sub cmd_make {
+    # Make a playlist
+    # auric make b7 discs/6f10c308/{5..8}
+    #   b7
+    #   |-- 0001 -> ../discs/6f10c308/0005
+    #   |-- 0002 -> ../discs/6f10c308/0006
+    #   |-- 0003 -> ../discs/6f10c308/0007
+    #   `-- 0004 -> ../discs/6f10c308/0008
+    usage if @ARGV < 2;
+    my $p = shift @ARGV;
+    fatal "Playlist $p already exists" if -e $p;
+    my @tracks;
+    foreach (@ARGV) {
+        m{^(.+)/([0-9]+)$}
+            or fatal "I don't know how to make something from $_";
+        my ($id, $t) = ($1, $2);
+        push @tracks, sprintf('%s/%04d', $id, $t);
+    }
+    xmkdir($p);
+    my $n = 0;
+    foreach (@tracks) {
+        $n++;
+        xsymlink("../$_", sprintf('%s/%04d', $p, $n));
+    }
+}
+
+sub mtime {
+    my ($f) = @_;
+    my @stat = stat $f;
+    return undef if !@stat;
+    return $stat[9];
 }
 
 sub call_hook {
@@ -778,6 +819,11 @@ sub xopen {
     fatal "open $file for writing: $!" if $mode =~ />/;
     fatal "start $file: $!" if $mode =~ /\|/;
     fatal "open $file: $!";
+}
+
+sub xsymlink {
+    my ($old, $new) = @_;
+    symlink $old, $new or fatal "symlink $old $new: $!";
 }
 
 sub usage {
