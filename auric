@@ -206,7 +206,7 @@ sub cmd_encode {
     ) or usage;
     foreach my $obj (@ARGV) {
         my @masters = glob("$obj/*/master.wav");
-        $self->_encode(basename($obj), @masters) if @masters;
+        $self->_encode($obj, @masters) if @masters;
     }
 }
 
@@ -219,14 +219,23 @@ sub _start_lame {
 
 sub _encode {
     my $self = shift;
-    my $objname = shift;
+    my $obj = shift;
+    my $objname = basename($obj);
     my $n = scalar @_;
     my @mp3s;
     my $fmt = "\r[%-4.4s] %-3.3s%s %s";
+    my ($meta, $tracks, $meta_mtime);
+    if (-e "$obj/metadata") {
+        ($meta, $tracks) = read_metadata("$obj/metadata");
+        $meta_mtime = mtime("$obj/metadata");
+    }
     foreach my $wav (@_) {
-        my $id = basename(dirname($wav));
+        my $dir = dirname($wav);
+        my $id = basename($dir);
         (my $mp3 = $wav) =~ s{(?<=/)master\.wav$}{listen.mp3};
-        if (!-e $mp3) {
+        (my $tags = $wav) =~ s{(?<=/)master\.wav$}{tags};
+        my $had_mp3 = -e $mp3;
+        if (!$had_mp3) {
             push @mp3s, $mp3;
             printf STDERR $fmt, $id, sprintf('%3d', 0), '%', $objname;
             my $fh = $self->_start_lame($wav, $mp3);
@@ -240,6 +249,14 @@ sub _encode {
                     }
                 }
             }
+        }
+        if ($meta && (!-e $tags || $meta_mtime > mtime($tags))) {
+            write_tags($tags, $tracks->{$id}, $meta);
+        }
+        next if !-e $tags;
+        if (!$had_mp3 || mtime($mp3) < mtime($tags)) {
+            my $h = read_tags($tags);
+            MP3::Tag->new($mp3)->update_tags($h);
         }
     }
     printf STDERR $fmt, 'done', '', '', "$objname\n";
@@ -300,17 +317,49 @@ sub cmd_find {
 
 sub cmd_ls {
     my ($self) = @_;
-    @ARGV = $self->dirs if !@ARGV;
-    my $twidth = ($ENV{'COLUMNS'} || 80) - 42;
-    foreach my $obj (@ARGV) {
-        next if !-e "$obj/metadata";
-        my ($meta, $tracks) = read_metadata("$obj/metadata");
-        my $title = $meta->{title} || $meta->{album};
-        chomp $title if defined $title;
-        $title ||= '(no title)';
-        $obj =~ s{^\Q$music_dir\E/}{}o;
-        printf "%4d %-24.24s %-${twidth}s\n", scalar(keys %$tracks), $obj, $title;
+    my $twidth = ($ENV{'COLUMNS'} || 80) - 28;
+    #@ARGV = $self->dirs if !@ARGV;
+    #foreach my $obj (@ARGV) {
+    $self->forobj(@ARGV, sub {
+        my ($id) = @_;
+        my $title = '(no title)';
+        my @tracks;
+        if (-e 'metadata') {
+            my ($meta, $tracks) = read_metadata('metadata');
+            $title = $meta->{title} || $meta->{album} || $title;
+            chomp $title;
+            @tracks = keys %$tracks;
+        }
+        my $stat = status_string(@tracks);
+        printf "%4d %-16.16s %5.5s %-${twidth}s\n", scalar(@tracks), $id, $stat, $title;
+    });
+}
+
+sub status_string {
+    my $str = '-----';
+    my $mod_metadata = mtime('metadata') || 0;
+    substr($str, 0, 1) = 'm' if $mod_metadata;
+
+    my %mod_tags = map { $_ => (mtime(sprintf('%04d/tags', $_)) || 0) } @_;
+    my %mod_listen = map { $_ => (mtime(sprintf('%04d/listen.mp3', $_)) || 0) } @_;
+
+    my $num_tags = scalar grep { $_ > 0 } values %mod_tags;
+    my $num_listen = scalar grep { $_ > 0 } values %mod_listen;
+
+    my $min_listen = min(values %mod_listen);
+    my $min_tags = min(values %mod_tags);
+
+    my $max_listen = max(values %mod_listen);
+    my $max_tags = max(values %mod_tags);
+
+    if ($num_listen) {
+        substr($str, 1, 1) = ( $num_listen == @_ ) ? 'l' : 'L';
     }
+    if ($num_tags) {
+        my $num_new_listen = scalar grep { $mod_listen{$_} > $mod_tags{$_} } @_;
+        substr($str, 2, 1) = ( $num_new_listen == @_ ? 't' : 'T' );
+    }
+    return $str;
 }
 
 sub read_file {
@@ -368,7 +417,7 @@ sub forobj {
     xchdir($music_dir);
     my @ids = map { s{^($music_dir/)}{}o; $_ } @_ ? @_ : glob('discs/*');
     foreach my $id (@ids) {
-        xchdir("$music_dir/discs/$id");
+        xchdir("$music_dir/$id");
         $code->($id);
     }
 }
@@ -382,7 +431,7 @@ sub cmd_tag {
     ) or usage;
     $self->forobj(@ARGV, sub {
         my ($id) = @_;
-        print STDERR "disc $id\n\n" if $verbose;
+        print STDERR "disc $id\n\n" if $dry_run;
         my %seen;
         find({
             'follow' => 1,
@@ -446,9 +495,8 @@ sub cmd_mktags {
         'n|dry-run' => \$dry_run,
         'f|force'   => \$force,
     ) or usage;
-    my @discs = map { s{^($music_dir/)?discs/}{}o; $_ } @ARGV ? @ARGV : glob('discs/*');
-    foreach my $id (@discs) {
-        xchdir($id =~ m{/} ? $id : "$music_dir/discs/$id");
+    $self->forobj(@ARGV, sub {
+        my ($id) = @_;
         print STDERR "disc $id\n\n" if $dry_run;
         my ($disc, $tracks) = read_metadata('metadata');
         my @dirs = grep { /^\d+$/ } glob('*');
@@ -462,20 +510,19 @@ sub cmd_mktags {
             #print STDERR "[\e[32;1mok  \e[0m] $t\n";
             print STDERR "\n" if $dry_run;
         }
-    }
+    });
 }
 
 sub cmd_edit {
     my ($self) = @_;
-    my @discs = map { s{^($music_dir/)?discs/}{}o; $_ } @ARGV ? @ARGV : glob('discs/*');
-    foreach my $id (@discs) {
-        xchdir($id =~ m{/} ? $id : "$music_dir/discs/$id");
+    $self->forobj(@ARGV, sub {
+        my ($id) = @_;
         my $mtime = mtime('metadata');
         my $editor = $ENV{'VISUAL'} || $ENV{'EDITOR'} || 'vi';
         system($editor, 'metadata') == 0 or fatal 'editor exited with error status';
         if ($mtime == mtime('metadata')) {
             print STDERR "unchanged: $id\n";
-            next;
+            return;
         }
         my ($disc, $tracks) = read_metadata('metadata');
         foreach my $t (sort keys %$tracks) {
@@ -486,7 +533,7 @@ sub cmd_edit {
                 $mp3->update_tags($h);
             }
         }
-    }
+    });
 }
 
 sub cmd_make {
@@ -605,7 +652,7 @@ sub _ingest_disc {
             xrename("$disc/$_", "$dest/$_");
         }
         if ($opt{'encode'} && @masters) {
-            my @mp3s = $self->_encode(basename($disc), @masters);
+            my @mp3s = $self->_encode($disc, @masters);
             foreach (sort { $a cmp $b } keys %tags) {
                 1;
             }
@@ -793,6 +840,23 @@ sub basename {
     my ($file) = @_;
     $file =~ s{.+/}{};
     return $file;
+}
+
+sub min {
+    return 0 if !@_;
+    my $n = 2**32;
+    foreach (@_) {
+        $n = $_ if $_ < $n;
+    }
+    return $n;
+}
+
+sub max {
+    my $n = 0;
+    foreach (@_) {
+        $n = $_ if $_ > $n;
+    }
+    return $n;
 }
 
 sub xmkdir {
