@@ -1,1 +1,16 @@
-Rip, manage, and listen to music
+auric - rip, manage, and listen to music
+
+To build:
+
+    $ cp config.mk.def config.mk
+    $ $EDITOR config.mk
+    $ make
+
+To install:
+
+    $ sudo make install
+
+Help:
+
+    $ auric help
+    $ man auric

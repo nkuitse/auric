@@ -130,10 +130,13 @@ into subdirectories in I<$MUSIC> according to their CDDB IDs.  Some of this is
 very Mac OS X-specific.  It loops indefinitely, ejecting each disc as it's
 finished.
 
-=item B<ingest> [I<disc>...]
+=item B<ingest> [B<-e>] [I<disc>...]
 
 Move things around within a disc directory and create a C<metadata> file with
 disc and track information taken from the CDDB file.
+
+If option B<-e> is supplied, the tracks will also be encoded into MP3
+"listening files".
 
 =item B<uningest> [I<disc>...]
 
@@ -188,21 +191,21 @@ but at this point there are no guarantees.  This is wrong and it will be fixed.
 
 =head1 PREREQUISITES
 
-B<auric> requires B<cdda2wav(1)>, B<lame(1)>, B<perl(1)>, B<zsh(1)>, and the
-Perl modules B<CDDB_get> and B<MP3::Tag>, as well as a handful of other,
+B<auric> requires B<perl(1)>, B<cdda2wav(1)>, B<lame(1)>, B<mocp(1)>, and the
+Perl modules B<IPC::Open3> and B<MP3::Tag>, as well as a handful of other,
 commonly used modules.
 
 =head1 BUGS
 
-Quite a few, I would think.
+More than a few, I would think.
 
 =head1 AUTHOR
 
-Paul Hoffman <nkuitse@nkuitse.com>
+Paul Hoffman <nkuitse@cpan.org>
 
 =head1 COPYRIGHT
 
-Copyright 2013-2016 Paul M. Hoffman.
+Copyright 2013-2019 Paul M. Hoffman.
 
 This module is free software; you can redistribute it and/or modify it under
 the same terms as Perl itself. See perldoc perlartistic.
@@ -213,6 +216,6 @@ B<fitness for a particular purpose>.  So there.
 
 =head1 WHAT'S UP WITH THE NAME?
 
-Georges Auric + Latin I<auris>.  Come on, you could have googled that!
+Georges Auric + Latin I<auris>.  Come on, you could have figured that out!  :-)
 
 =cut

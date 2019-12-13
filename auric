@@ -5,11 +5,11 @@ use warnings;
 
 package Auric;
 
-use File::Glob;
+#use File::Glob;
 use IO::Handle;
 use IPC::Open3 qw(open3);
 use MP3::Tag;
-use CDDB_get qw(get_cddb);
+# use CDDB_get qw(get_cddb);
 use Cwd;
 use File::Find qw(find);
 use POSIX qw(strftime);
@@ -18,7 +18,7 @@ use Getopt::Long
     qw(:config posix_default gnu_compat require_order bundling no_ignore_case);
 
 use constant DEBUG => 0;
-use constant VERSION => '0.06';
+use constant VERSION => '0.07';
 
 sub usage;
 sub fatal;
